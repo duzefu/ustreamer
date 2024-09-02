@@ -107,27 +107,24 @@ void us_memsink_destroy(us_memsink_s *sink) {
 }
 
 bool us_memsink_server_check(us_memsink_s *sink, const us_frame_s *frame) {
-	// Если frame == NULL, то только проверяем наличие клиентов
-	// или необходимость инициализировать память.
+	// 如果 frame == NULL，则仅检查是否有客户端或是否需要初始化内存。
 
 	assert(sink->server);
 
 	if (sink->mem->magic != US_MEMSINK_MAGIC || sink->mem->version != US_MEMSINK_VERSION) {
-		// Если регион памяти не был инициализирован, то нужно что-то туда положить.
-		// Блокировка не нужна, потому что только сервер пишет в эти переменные.
+		// 如果内存区域未初始化，则需要写入一些内容。
+		// 不需要锁定，因为只有服务器会写入这些变量。
 		return true;
 	}
 
 	const ldf unsafe_ts = sink->mem->last_client_ts;
 	if (unsafe_ts != sink->unsafe_last_client_ts) {
-		// Клиент пишет в синке свою отметку last_client_ts при любом действии.
-		// Мы не берем блокировку здесь, а просто проверяем, является ли это число тем же самым,
-		// что было прочитано нами в предыдущих итерациях. Значению не нужно быть консистентным,
-		// и даже если мы прочитали мусор из-за гонки в памяти между чтением здеси и записью
-		// из клиента, мы все равно можем сделать вывод, есть ли у нас клиенты вообще.
-		// Если число число поменялось то у нас точно есть клиенты и дальнейшие проверки
-		// проводить не требуется. Если же число неизменно, то стоит поставить блокировку
-		// и проверить, нужно ли записать что-нибудь в память для инициализации фрейма.
+		// 客户端在任何操作时都会将其时间戳写入 sink。
+		// 我们在这里不加锁，只是检查这个数字是否与我们在前几次迭代中读取的相同。
+		// 这个值不需要一致，即使我们在这里读取时与客户端写入时发生了内存竞争而读取了垃圾数据，
+		// 我们仍然可以判断是否有客户端。
+		// 如果数字发生变化，则肯定有客户端，不需要进一步检查。
+		// 如果数字没有变化，则应加锁并检查是否需要写入内存以初始化帧。
 		sink->unsafe_last_client_ts = unsafe_ts;
 		atomic_store(&sink->has_clients, true);
 		return true;
@@ -135,27 +132,27 @@ bool us_memsink_server_check(us_memsink_s *sink, const us_frame_s *frame) {
 
 	if (flock(sink->fd, LOCK_EX | LOCK_NB) < 0) {
 		if (errno == EWOULDBLOCK) {
-			// Есть живой клиент, который прямо сейчас взял блокировку и читает фрейм из синка
+			// 有一个活跃的客户端，它现在正持有锁并从 sink 读取帧
 			atomic_store(&sink->has_clients, true);
 			return true;
 		}
-		US_LOG_PERROR("%s-sink: Can't lock memory", sink->name);
+		US_LOG_PERROR("%s-sink: 无法锁定内存", sink->name);
 		return false;
 	}
 
-	// Проверяем, есть ли у нас живой клиент по таймауту
+	// 检查是否有活跃的客户端通过超时
 	const bool has_clients = (sink->mem->last_client_ts + sink->client_ttl > us_get_now_monotonic());
 	atomic_store(&sink->has_clients, has_clients);
 
 	if (flock(sink->fd, LOCK_UN) < 0) {
-		US_LOG_PERROR("%s-sink: Can't unlock memory", sink->name);
+		US_LOG_PERROR("%s-sink: 无法解锁内存", sink->name);
 		return false;
 	}
 	if (has_clients) {
 		return true;
 	}
 	if (frame != NULL && !US_FRAME_COMPARE_GEOMETRY(sink->mem, frame)) {
-		// Если есть изменения в геометрии/формате фрейма, то их тоже нобходимо сразу записать в синк
+		// 如果帧的几何/格式发生变化，也需要立即写入 sink
 		return true;
 	}
 	return false;

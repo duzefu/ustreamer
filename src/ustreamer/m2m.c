@@ -443,7 +443,6 @@ static void _m2m_encoder_cleanup(us_m2m_encoder_s *enc) {
 		_LOG_INFO("Encoder closed");
 	}
 }
-
 static int _m2m_encoder_compress_raw(us_m2m_encoder_s *enc, const us_frame_s *src, us_frame_s *dest, bool force_key) {
 	us_m2m_encoder_runtime_s *const run = enc->run;
 
@@ -500,11 +499,11 @@ static int _m2m_encoder_compress_raw(us_m2m_encoder_s *enc, const us_frame_s *sr
 	_LOG_DEBUG("Sending%s %s buffer ...", (!run->p_dma ? " (releasing)" : ""), input_name);
 	_E_XIOCTL(VIDIOC_QBUF, &input_buf, "Can't send %s buffer", input_name);
 
-	// Для не-DMA отправка буфера по факту являтся освобождением этого буфера
+	// 对于非DMA，发送缓冲区实际上是释放该缓冲区
 	bool input_released = !run->p_dma;
 
 	// https://github.com/pikvm/ustreamer/issues/253
-	// За секунду точно должно закодироваться.
+	// 编码应该在一秒内完成。
 	const ldf deadline_ts = us_get_now_monotonic() + 1;
 
 	while (true) {
@@ -539,9 +538,8 @@ static int _m2m_encoder_compress_raw(us_m2m_encoder_s *enc, const us_frame_s *sr
 
 			bool done = false;
 			if (ts.tv_sec != output_buf.timestamp.tv_sec || ts.tv_usec != output_buf.timestamp.tv_usec) {
-				// Енкодер первый раз может выдать буфер с мусором и нулевым таймстампом,
-				// так что нужно убедиться, что мы читаем выходной буфер, соответствующий
-				// входному (с тем же таймстампом).
+				// 编码器第一次可能会输出带有垃圾数据和零时间戳的缓冲区，
+				// 因此需要确保我们读取的输出缓冲区与输入缓冲区对应（具有相同的时间戳）。
 				_LOG_DEBUG("Need to retry OUTPUT buffer due timestamp mismatch");
 			} else {
 				us_frame_set_data(dest, run->output_bufs[output_buf.index].data, output_plane.bytesused);
@@ -560,7 +558,7 @@ static int _m2m_encoder_compress_raw(us_m2m_encoder_s *enc, const us_frame_s *sr
 	}
 	return 0;
 
-error: // Mostly for _E_XIOCTL
+error: // 主要用于 _E_XIOCTL
 	return -1;
 }
 

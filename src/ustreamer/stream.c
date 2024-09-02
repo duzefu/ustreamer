@@ -141,7 +141,6 @@ void us_stream_destroy(us_stream_s *stream) {
 	free(stream->run);
 	free(stream);
 }
-
 void us_stream_loop(us_stream_s *stream) {
 	us_stream_runtime_s *const run = stream->run;
 	us_capture_s *const cap = stream->cap;
@@ -221,7 +220,7 @@ void us_stream_loop(us_stream_s *stream) {
 #			undef QUEUE_HW
 			us_queue_put(releasers[hw->buf.index].queue, hw, 0); // Plan to release
 
-			// Мы не обновляем здесь состояние синков, потому что это происходит внутри обслуживающих их потоков
+			// 我们不在这里更新sink的状态，因为这是在处理它们的线程内部发生的
 			_stream_check_suicide(stream);
 			if (stream->slowdown && !_stream_has_any_clients_cached(stream)) {
 				usleep(100 * 1000);
@@ -398,10 +397,12 @@ static void *_h264_thread(void *v_ctx) {
 			continue;
 		}
 
+		// 检查是否有客户端在观看，如果没有则跳过编码
 		if (!us_memsink_server_check(stream->h264_sink, NULL)) {
 			US_LOG_VERBOSE("H264: Passed encoding because nobody is watching");
 			goto decref;
 		}
+		// 检查帧的时间戳是否符合FPS限制，如果不符合则跳过编码
 		if (hw->raw.grab_ts < grab_after_ts) {
 			US_LOG_DEBUG("H264: Passed encoding for FPS limit");
 			goto decref;
@@ -409,10 +410,9 @@ static void *_h264_thread(void *v_ctx) {
 
 		_stream_encode_expose_h264(ctx->stream, &hw->raw, false);
 
-		// M2M-енкодер увеличивает задержку на 100 милисекунд при 1080p, если скормить ему больше 30 FPS.
-		// Поэтому у нас есть два режима: 60 FPS для маленьких видео и 30 для 1920x1080(1200).
-		// Следующй фрейм захватывается не раньше, чем это требуется по FPS, минус небольшая
-		// погрешность (если захват неравномерный) - немного меньше 1/60, и примерно треть от 1/30.
+		// M2M编码器在1080p时，如果超过30 FPS会增加100毫秒的延迟。
+		// 因此有两种模式：小视频为60 FPS，大视频（1920x1080或1200）为30 FPS。
+		// 下一帧的抓取时间不早于FPS要求的时间，减去一些误差（如果抓取不均匀） - 略少于1/60，约为1/30的三分之一。
 		const uint fps_limit = stream->run->h264_enc->run->fps_limit;
 		if (fps_limit > 0) {
 			const ldf frame_interval = (ldf)1 / fps_limit;
