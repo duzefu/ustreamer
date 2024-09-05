@@ -441,24 +441,27 @@ void us_capture_hwbuf_incref(us_capture_hwbuf_s *hw) {
 void us_capture_hwbuf_decref(us_capture_hwbuf_s *hw) {
 	atomic_fetch_sub(&hw->refs, 1);
 }
-
+// 添加注释以解释_capture_wait_buffer函数的功能
 int _capture_wait_buffer(us_capture_s *cap) {
+	// 获取运行时信息
 	us_capture_runtime_s *const run = cap->run;
 
+	// 初始化文件描述符集
 #	define INIT_FD_SET(x_set) \
 		fd_set x_set; FD_ZERO(&x_set); FD_SET(run->fd, &x_set);
 	INIT_FD_SET(read_fds);
 	INIT_FD_SET(error_fds);
 #	undef INIT_FD_SET
 
-	// Раньше мы проверяли и has_write, но потом выяснилось, что libcamerify зачем-то
-	// генерирует эвенты на запись, вероятно ошибочно. Судя по всему, игнорирование
-	// has_write не делает никому плохо.
+	// 以前我们还会检查has_write，但后来发现libcamerify会错误地生成写事件。
+	// 忽略has_write似乎对任何人都没有坏处。
 
+	// 设置超时时间
 	struct timeval timeout;
 	timeout.tv_sec = cap->timeout;
 	timeout.tv_usec = 0;
 
+	// 调用select函数等待视频设备事件
 	_LOG_DEBUG("Calling select() on video device ...");
 
 	bool has_read = false;
@@ -471,16 +474,19 @@ int _capture_wait_buffer(us_capture_s *cap) {
 	_LOG_DEBUG("Device select() --> %d; has_read=%d, has_error=%d", selected, has_read, has_error);
 
 	if (selected < 0) {
+		// 处理select错误，除非是EINTR
 		if (errno != EINTR) {
 			_LOG_PERROR("Device select() error");
 		}
 		return -1;
 	} else if (selected == 0) {
+		// 处理超时
 		_LOG_ERROR("Device select() timeout");
 		return -1;
 	} else {
+		// 处理错误事件
 		if (has_error && _capture_consume_event(cap) < 0) {
-			return -1; // Restart required
+			return -1; // 需要重启
 		}
 	}
 	return 0;

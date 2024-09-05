@@ -110,37 +110,37 @@ const char *us_encoder_type_to_string(us_encoder_type_e type) {
 }
 
 void us_encoder_open(us_encoder_s *enc, us_capture_s *cap) {
-	us_encoder_runtime_s *const run = enc->run;
-	us_capture_runtime_s *const cr = cap->run;
+	us_encoder_runtime_s *const run = enc->run; // 获取编码器运行时信息
+	us_capture_runtime_s *const cr = cap->run; // 获取捕获运行时信息
 
-	assert(run->pool == NULL);
+	assert(run->pool == NULL); // 确保线程池未初始化
 
-	us_encoder_type_e type = enc->type;
-	uint quality = cap->jpeg_quality;
-	uint n_workers = US_MIN(enc->n_workers, cr->n_bufs);
+	us_encoder_type_e type = enc->type; // 获取编码器类型
+	uint quality = cap->jpeg_quality; // 获取JPEG质量
+	uint n_workers = US_MIN(enc->n_workers, cr->n_bufs); // 计算工作线程数
 
 	if (us_is_jpeg(cr->format) && type != US_ENCODER_TYPE_HW) {
-		US_LOG_INFO("Switching to HW encoder: the input is (M)JPEG ...");
+		US_LOG_INFO("Switching to HW encoder: the input is (M)JPEG ..."); // 切换到硬件编码器
 		type = US_ENCODER_TYPE_HW;
 	}
 
 	if (type == US_ENCODER_TYPE_HW) {
 		if (us_is_jpeg(cr->format)) {
 			quality = cr->jpeg_quality;
-			n_workers = 1;
+			n_workers = 1; // 硬件编码器只需要一个线程
 		} else {
-			US_LOG_INFO("Switching to CPU encoder: the input format is not (M)JPEG ...");
+			US_LOG_INFO("Switching to CPU encoder: the input format is not (M)JPEG ..."); // 切换到CPU编码器
 			type = US_ENCODER_TYPE_CPU;
 			quality = cap->jpeg_quality;
 		}
 
 	} else if (type == US_ENCODER_TYPE_M2M_VIDEO || type == US_ENCODER_TYPE_M2M_IMAGE) {
-		US_LOG_DEBUG("Preparing M2M-%s encoder ...", (type == US_ENCODER_TYPE_M2M_VIDEO ? "VIDEO" : "IMAGE"));
+		US_LOG_DEBUG("Preparing M2M-%s encoder ...", (type == US_ENCODER_TYPE_M2M_VIDEO ? "VIDEO" : "IMAGE")); // 准备M2M编码器
 		if (run->m2ms == NULL) {
 			US_CALLOC(run->m2ms, n_workers);
 		}
 		for (; run->n_m2ms < n_workers; ++run->n_m2ms) {
-			// Начинаем с нуля и доинициализируем на следующих заходах при необходимости
+			// 从零开始，并在后续需要时进行进一步初始化
 			char name[32];
 			US_SNPRINTF(name, 31, "JPEG-%u", run->n_m2ms);
 			if (type == US_ENCODER_TYPE_M2M_VIDEO) {
@@ -152,27 +152,27 @@ void us_encoder_open(us_encoder_s *enc, us_capture_s *cap) {
 	}
 
 	if (quality == 0) {
-		US_LOG_INFO("Using JPEG quality: encoder default");
+		US_LOG_INFO("Using JPEG quality: encoder default"); // 使用默认JPEG质量
 	} else {
-		US_LOG_INFO("Using JPEG quality: %u%%", quality);
+		US_LOG_INFO("Using JPEG quality: %u%%", quality); // 使用指定JPEG质量
 	}
 
-	US_MUTEX_LOCK(run->mutex);
+	US_MUTEX_LOCK(run->mutex); // 加锁
 	run->type = type;
 	run->quality = quality;
-	US_MUTEX_UNLOCK(run->mutex);
+	US_MUTEX_UNLOCK(run->mutex); // 解锁
 
 	const ldf desired_interval = (
 		cap->desired_fps > 0 && (cap->desired_fps < cap->run->hw_fps || cap->run->hw_fps == 0)
 		? (ldf)1 / cap->desired_fps
 		: 0
-	);
+	); // 计算期望的帧间隔
 
 	enc->run->pool = us_workers_pool_init(
 		"JPEG", "jw", n_workers, desired_interval,
 		_worker_job_init, (void*)enc,
 		_worker_job_destroy,
-		_worker_run_job);
+		_worker_run_job); // 初始化工作线程池
 }
 
 void us_encoder_close(us_encoder_s *enc) {

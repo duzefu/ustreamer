@@ -142,26 +142,36 @@ void us_stream_destroy(us_stream_s *stream) {
 	free(stream);
 }
 void us_stream_loop(us_stream_s *stream) {
+	// 获取stream的运行时信息和捕获设备信息
 	us_stream_runtime_s *const run = stream->run;
 	us_capture_s *const cap = stream->cap;
 
+	// 更新最后一次请求的时间戳
 	atomic_store(&run->http->last_request_ts, us_get_now_monotonic());
 
+	// 如果存在H264 sink，初始化H264编码器和相关帧 ?其他编码器就不需要初始化了?即使是表面上的?
 	if (stream->h264_sink != NULL) {
 		run->h264_enc = us_m2m_h264_encoder_init("H264", stream->h264_m2m_path, stream->h264_bitrate, stream->h264_gop);
-		run->h264_tmp_src = us_frame_init();
-		run->h264_dest = us_frame_init();
+		run->h264_tmp_src = us_frame_init(); // input and output buffer is 512K
+		run->h264_dest = us_frame_init(); // input and output buffer is 512K
 	}
 
+	// 初始化循环，直到初始化成功
 	while (!_stream_init_loop(stream)) {
+		// 初始化线程停止标志
 		atomic_bool threads_stop;
 		atomic_init(&threads_stop, false);
 
+		// 初始化释放互斥锁
 		pthread_mutex_t release_mutex;
 		US_MUTEX_INIT(release_mutex);
+
+		// 获取释放器数量
 		const uint n_releasers = cap->run->n_bufs;
 		_releaser_context_s *releasers;
 		US_CALLOC(releasers, n_releasers);
+
+		// 初始化每个释放器
 		for (uint index = 0; index < n_releasers; ++index) {
 			_releaser_context_s *ctx = &releasers[index];
 			ctx->cap = cap;
@@ -171,6 +181,7 @@ void us_stream_loop(us_stream_s *stream) {
 			US_THREAD_CREATE(ctx->tid, _releaser_thread, ctx);
 		}
 
+		// 定义创建工作线程的宏
 #		define CREATE_WORKER(x_cond, x_ctx, x_thread, x_capacity) \
 			_worker_context_s *x_ctx = NULL; \
 			if (x_cond) { \
@@ -180,10 +191,15 @@ void us_stream_loop(us_stream_s *stream) {
 				x_ctx->stop = &threads_stop; \
 				US_THREAD_CREATE(x_ctx->tid, (x_thread), x_ctx); \
 			}
+
+		// 创建JPEG工作线程
 		CREATE_WORKER(true, jpeg_ctx, _jpeg_thread, cap->run->n_bufs);
+		// 创建RAW工作线程
 		CREATE_WORKER((stream->raw_sink != NULL), raw_ctx, _raw_thread, 2);
+		// 创建H264工作线程
 		CREATE_WORKER((stream->h264_sink != NULL), h264_ctx, _h264_thread, cap->run->n_bufs);
 #		ifdef WITH_V4P
+		// 创建DRM工作线程
 		CREATE_WORKER((stream->drm != NULL), drm_ctx, _drm_thread, cap->run->n_bufs); // cppcheck-suppress assertWithSideEffect
 #		endif
 #		undef CREATE_WORKER
@@ -191,37 +207,49 @@ void us_stream_loop(us_stream_s *stream) {
 		US_LOG_INFO("Capturing ...");
 
 		uint slowdown_count = 0;
+		// 主循环，直到停止标志被设置
 		while (!atomic_load(&run->stop) && !atomic_load(&threads_stop)) {
 			us_capture_hwbuf_s *hw;
+			// 抓取硬件缓冲区
 			switch (us_capture_hwbuf_grab(cap, &hw)) {
-				case 0 ... INT_MAX: break; // Grabbed buffer number
-				case US_ERROR_NO_DATA: continue; // Broken frame
-				default: goto close; // Any error
+				case 0 ... INT_MAX: break; // 成功抓取缓冲区
+				case US_ERROR_NO_DATA: continue; // 抓取到损坏的帧
+				default: goto close; // 其他错误
 			}
 
+			// 更新元数据
 			us_fpsi_meta_s meta = {0};
 			us_fpsi_frame_to_meta(&hw->raw, &meta);
 			us_fpsi_update(run->http->captured_fpsi, true, &meta);
 
 #			ifdef WITH_GPIO
+			// 设置GPIO流在线
 			us_gpio_set_stream_online(true);
 #			endif
 
+			// 定义将硬件缓冲区加入队列的宏
 #			define QUEUE_HW(x_ctx) if (x_ctx != NULL) { \
 					us_capture_hwbuf_incref(hw); \
 					us_queue_put(x_ctx->queue, hw, 0); \
 				}
+			// 将缓冲区加入JPEG队列
 			QUEUE_HW(jpeg_ctx);
+			// 将缓冲区加入RAW队列
 			QUEUE_HW(raw_ctx);
+			// 将缓冲区加入H264队列
 			QUEUE_HW(h264_ctx);
 #			ifdef WITH_V4P
+			// 将缓冲区加入DRM队列
 			QUEUE_HW(drm_ctx);
 #			endif
 #			undef QUEUE_HW
+
+			// 将缓冲区加入释放队列
 			us_queue_put(releasers[hw->buf.index].queue, hw, 0); // Plan to release
 
-			// 我们不在这里更新sink的状态，因为这是在处理它们的线程内部发生的
+			// 检查是否需要自杀
 			_stream_check_suicide(stream);
+			// 如果需要减速且没有客户端，则减速
 			if (stream->slowdown && !_stream_has_any_clients_cached(stream)) {
 				usleep(100 * 1000);
 				slowdown_count = (slowdown_count + 1) % 10;
@@ -232,21 +260,28 @@ void us_stream_loop(us_stream_s *stream) {
 		}
 
 	close:
+		// 设置线程停止标志
 		atomic_store(&threads_stop, true);
 
+		// 定义删除工作线程的宏
 #		define DELETE_WORKER(x_ctx) if (x_ctx != NULL) { \
 				US_THREAD_JOIN(x_ctx->tid); \
 				us_queue_destroy(x_ctx->queue); \
 				free(x_ctx); \
 			}
 #		ifdef WITH_V4P
+		// 删除DRM工作线程
 		DELETE_WORKER(drm_ctx);
 #		endif
+		// 删除H264工作线程
 		DELETE_WORKER(h264_ctx);
+		// 删除RAW工作线程
 		DELETE_WORKER(raw_ctx);
+		// 删除JPEG工作线程
 		DELETE_WORKER(jpeg_ctx);
 #		undef DELETE_WORKER
 
+		// 删除所有释放器
 		for (uint index = 0; index < n_releasers; ++index) {
 			US_THREAD_JOIN(releasers[index].tid);
 			us_queue_destroy(releasers[index].queue);
@@ -254,16 +289,20 @@ void us_stream_loop(us_stream_s *stream) {
 		free(releasers);
 		US_MUTEX_DESTROY(release_mutex);
 
+		// 重置线程停止标志
 		atomic_store(&threads_stop, false);
 
+		// 关闭编码器和捕获设备
 		us_encoder_close(stream->enc);
 		us_capture_close(cap);
 
+		// 如果未停止，打印分隔符
 		if (!atomic_load(&run->stop)) {
 			US_SEP_INFO('=');
 		}
 	}
 
+	// 删除H264编码器和相关帧
 	US_DELETE(run->h264_enc, us_m2m_encoder_destroy);
 	US_DELETE(run->h264_tmp_src, us_frame_destroy);
 	US_DELETE(run->h264_dest, us_frame_destroy);
@@ -530,8 +569,8 @@ static int _stream_init_loop(us_stream_s *stream) {
 		us_gpio_set_stream_online(false);
 #		endif
 
-		// Флаги has_clients у синков не обновляются сами по себе, поэтому обновим их
-		// на каждой итерации старта стрима. После старта этим будут заниматься воркеры.
+		// 标志位 has_clients 在 sink 中不会自动更新，因此在每次启动流时更新它们
+		// 启动后，这些工作将由 worker 处理
 #		define UPDATE_SINK(x_sink) if (x_sink != NULL) { us_memsink_server_check(x_sink, NULL); }
 		UPDATE_SINK(stream->jpeg_sink);
 		UPDATE_SINK(stream->raw_sink);
@@ -567,19 +606,21 @@ static int _stream_init_loop(us_stream_s *stream) {
 				break;
 			}
 			if (count % 10 == 0) {
-				// Каждую секунду повторяем blank
+				// 每秒钟重复一次 blank
 				uint width = stream->cap->run->width;
 				uint height = stream->cap->run->height;
 				if (width == 0 || height == 0) {
 					width = stream->cap->width;
 					height = stream->cap->height;
 				}
+				// 这里显示无信号的画面
 				us_blank_draw(run->blank, "< NO SIGNAL >", width, height);
 
 				us_fpsi_meta_s meta = {0};
 				us_fpsi_frame_to_meta(run->blank->raw, &meta);
 				us_fpsi_update(run->http->captured_fpsi, false, &meta);
 
+				// 这里吧无信号的画面编码
 				_stream_expose_jpeg(stream, run->blank->jpeg);
 				_stream_expose_raw(stream, run->blank->raw);
 				_stream_encode_expose_h264(stream, run->blank->raw, true);

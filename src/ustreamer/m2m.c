@@ -443,6 +443,12 @@ static void _m2m_encoder_cleanup(us_m2m_encoder_s *enc) {
 		_LOG_INFO("Encoder closed");
 	}
 }
+// 这个函数就是把src的原始图像,传给v4l2控制下的encoder,然后encoder把压缩后的图像传给dest
+// 要说明的是,虽然内部的实现是非阻塞的.但是整个函数套壳while变成了阻塞的
+// 我们要用RK VENC替代这个部分,当然可能VI的部分也要替换.我不是完全确定
+// 另外要介绍一下这两个反直觉的宏:
+// VIDIOC_QBUF： 放入帧缓冲区,用于等待他被填充
+// VIDIOC_DQBUF：取出含有数据的帧缓冲区
 static int _m2m_encoder_compress_raw(us_m2m_encoder_s *enc, const us_frame_s *src, us_frame_s *dest, bool force_key) {
 	us_m2m_encoder_runtime_s *const run = enc->run;
 
@@ -490,6 +496,7 @@ static int _m2m_encoder_compress_raw(us_m2m_encoder_s *enc, const us_frame_s *sr
 	input_buf.timestamp.tv_usec = ts.tv_usec;
 	input_plane.bytesused = src->used;
 	input_plane.length = src->used;
+	// 这里把输入塞进encoder
 	if (!run->p_dma) {
 		memcpy(run->input_bufs[input_buf.index].data, src->data, src->used);
 	}
@@ -542,6 +549,7 @@ static int _m2m_encoder_compress_raw(us_m2m_encoder_s *enc, const us_frame_s *sr
 				// 因此需要确保我们读取的输出缓冲区与输入缓冲区对应（具有相同的时间戳）。
 				_LOG_DEBUG("Need to retry OUTPUT buffer due timestamp mismatch");
 			} else {
+				// 这里获取输出
 				us_frame_set_data(dest, run->output_bufs[output_buf.index].data, output_plane.bytesused);
 				dest->key = output_buf.flags & V4L2_BUF_FLAG_KEYFRAME;
 				dest->gop = enc->gop;
