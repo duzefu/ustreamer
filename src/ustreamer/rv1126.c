@@ -58,18 +58,19 @@ int rv1126_encoder_change_bitrate(int bitrate){
         return true;
     }
     // get para then change then set
-    VENC_CHN_PARAM_S param;
-    if (RK_MPI_VENC_GetVencChnParam(VencChn,&param) == RK_SUCCESS){
-        param.stFrameRate.s32DstFrmRate = Media_bitrate;
-        if (RK_MPI_VENC_SetVencChnParam(VencChn,&param) == RK_SUCCESS){
-            US_LOG_DEBUG("RV1126:SetVencChnParam bitrate = %d",Media_bitrate);
-            return true;
-        }else{
-            US_LOG_ERROR("RV1126:SetVencChnParam failed");
-            return false;
-        }
-    }else
-        US_LOG_ERROR("RV1126:GetVencChnParam failed");
+    // TODO: RK文档里面有这个函数,但是SDK里面找不到任何定义
+    // VENC_CHN_PARAM_S param;
+    // if (RK_MPI_VENC_GetVencChnParam(VencChn,&param) == RK_SUCCESS){
+    //     param.stFrameRate.s32DstFrmRate = Media_bitrate;
+    //     if (RK_MPI_VENC_SetVencChnParam(VencChn,&param) == RK_SUCCESS){
+    //         US_LOG_DEBUG("RV1126:SetVencChnParam bitrate = %d",Media_bitrate);
+    //         return true;
+    //     }else{
+    //         US_LOG_ERROR("RV1126:SetVencChnParam failed");
+    //         return false;
+    //     }
+    // }else
+    //     US_LOG_ERROR("RV1126:GetVencChnParam failed");
     return false;
 }
 
