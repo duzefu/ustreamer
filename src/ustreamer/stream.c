@@ -153,7 +153,7 @@ void us_stream_loop(us_stream_s *stream) {
 
 	// 如果存在H264 sink，初始化H264编码器和相关帧 ?其他编码器就不需要初始化了?即使是表面上的?
 	if (stream->h264_sink != NULL) {
-		run->enc = us_m2m_h264_encoder_init("H264", stream->h264_m2m_path, stream->h264_bitrate, stream->h264_gop);
+		run->m2m_enc = us_m2m_h264_encoder_init("H264", stream->h264_m2m_path, stream->h264_bitrate, stream->h264_gop);
 		run->tmp_src = us_frame_init(); // input and output buffer is 512K
 		run->dest = us_frame_init(); // input and output buffer is 512K
 	}
@@ -329,7 +329,7 @@ void us_stream_loop(us_stream_s *stream) {
 
 	// 删除H264编码器和相关帧
 	US_DELETE(run->rv1126_enc, us_rv1126_encoder_deinit);
-	US_DELETE(run->enc, us_m2m_encoder_destroy);
+	US_DELETE(run->m2m_enc, us_m2m_encoder_destroy);
 	US_DELETE(run->tmp_src, us_frame_destroy);
 	US_DELETE(run->dest, us_frame_destroy);
 }
@@ -508,7 +508,7 @@ static void *_h264_thread(void *v_ctx) {
 		// M2M编码器在1080p时，如果超过30 FPS会增加100毫秒的延迟。
 		// 因此有两种模式：小视频为60 FPS，大视频（1920x1080或1200）为30 FPS。
 		// 下一帧的抓取时间不早于FPS要求的时间，减去一些误差（如果抓取不均匀） - 略少于1/60，约为1/30的三分之一。
-		const uint fps_limit = stream->run->enc->run->fps_limit;
+		const uint fps_limit = stream->run->m2m_enc->run->fps_limit;
 		if (fps_limit > 0) {
 			const ldf frame_interval = (ldf)1 / fps_limit;
 			grab_after_ts = hw->raw.grab_ts + frame_interval - 0.01;
@@ -770,7 +770,7 @@ static void _stream_encode_expose_h264(us_stream_s *stream, const us_frame_s *fr
 		run->h264_key_requested = false;
 		force_key = true;
 	}
-	if (!us_m2m_encoder_compress(run->enc, frame, run->dest, force_key)) {
+	if (!us_m2m_encoder_compress(run->m2m_enc, frame, run->dest, force_key)) {
 		meta.online = !us_memsink_server_put(stream->h264_sink, run->dest, &run->h264_key_requested);
 	}
 

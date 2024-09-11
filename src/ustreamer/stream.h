@@ -62,7 +62,7 @@ typedef struct {
 typedef struct {
 	us_stream_http_s	*http;
 
-	us_m2m_encoder_s	*enc;
+	us_m2m_encoder_s	*m2m_enc;
 	us_rv1126_encoder_s	*rv1126_enc;
 	us_frame_s			*tmp_src;
 	us_frame_s			*dest;
