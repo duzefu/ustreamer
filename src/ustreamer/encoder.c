@@ -53,6 +53,9 @@ static const struct {
 	{"M2M-IMAGE",	US_ENCODER_TYPE_M2M_IMAGE},
 	{"M2M-MJPEG",	US_ENCODER_TYPE_M2M_VIDEO},
 	{"M2M-JPEG",	US_ENCODER_TYPE_M2M_IMAGE},
+	{"RV1126-MJPEG",US_ENCODER_TYPE_RV1126_MJPEG},
+	{"RV1126-H264",	US_ENCODER_TYPE_RV1126_H264},
+	{"RV1126-H265",	US_ENCODER_TYPE_RV1126_H265},
 	{"OMX",			US_ENCODER_TYPE_M2M_IMAGE},
 	{"NOOP",		US_ENCODER_TYPE_CPU},
 };
@@ -149,6 +152,20 @@ void us_encoder_open(us_encoder_s *enc, us_capture_s *cap) {
 				run->m2ms[run->n_m2ms] = us_m2m_jpeg_encoder_init(name, enc->m2m_path, quality);
 			}
 		}
+	} else if (type == US_ENCODER_TYPE_RV1126_H264 || type == US_ENCODER_TYPE_RV1126_H265 || type == US_ENCODER_TYPE_RV1126_MJPEG) {
+		n_workers = 1; //1126不需要多个编码器
+		// 这里应是在初始化单独编码某一帧的编码工具
+		US_LOG_DEBUG("Preparing RV1126-%d encoder ...", (type)); // 准备M2M编码器
+		// 这里的代码不需要了,因为RV1126编码器是单线程的,不需要指定好几个线程,让他们使用不同的编码器来处理编码
+		// 对应的代码在_worker_run_job
+		// if (run->rv1126_encoder == NULL) {
+		// 	US_CALLOC(run->rv1126_encoder, n_workers);
+		// }
+		// for (; run->n_rv1126_encoder < n_workers; ++run->n_rv1126_encoder) {
+		// 	char name[32];
+		// 	US_SNPRINTF(name, 31, "rv1126-%u", run->n_rv1126_encoder);
+		// 	run->rv1126_encoder[run->n_rv1126_encoder] = us_rv1126_encoder_init(type, "/dev/video0");
+		// }
 	}
 
 	if (quality == 0) {
@@ -224,6 +241,13 @@ static bool _worker_run_job(us_worker_s *wr) {
 		if (us_m2m_encoder_compress(run->m2ms[wr->number], src, dest, false) < 0) {
 			goto error;
 		}
+	} else if (run->type == US_ENCODER_TYPE_RV1126_MJPEG || run->type == US_ENCODER_TYPE_RV1126_H264 || run->type == US_ENCODER_TYPE_RV1126_H265) {
+		US_LOG_VERBOSE("Compressing JPEG using rv1126-%s: worker=%s, buffer=%u",
+			(run->type == US_ENCODER_TYPE_RV1126_MJPEG ? "MJPEG" : (run->type == US_ENCODER_TYPE_RV1126_H264 ? US_ENCODER_TYPE_RV1126_H264 :US_ENCODER_TYPE_RV1126_H265)), wr->name, job->hw->buf.index);
+		// TODO 等RK给我回复之后再看这里怎么处理单一图像
+		// if (us_rv1126_encoder_compress(src, dest, false) < 0) {
+		// 	goto error;
+		// }
 
 	} else {
 		assert(0 && "Unknown encoder type");

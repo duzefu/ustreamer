@@ -170,14 +170,18 @@ INLINE ldf us_timespec_to_ld(const struct timespec *ts) {
 }
 
 INLINE int us_flock_timedwait_monotonic(int fd, ldf timeout) {
+	// 计算截止时间戳
 	const ldf deadline_ts = us_get_now_monotonic() + timeout;
 	int retval = -1;
 
+	// 循环尝试获取锁
 	while (true) {
 		retval = flock(fd, LOCK_EX | LOCK_NB);
+		// 如果成功获取锁、遇到非阻塞错误或当前时间超过截止时间，则退出循环
 		if (retval == 0 || errno != EWOULDBLOCK || us_get_now_monotonic() > deadline_ts) {
 			break;
 		}
+		// 短暂休眠后重试
 		if (usleep(1000) < 0) {
 			break;
 		}

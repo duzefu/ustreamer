@@ -76,6 +76,7 @@ static void *_releaser_thread(void *v_ctx);
 static void *_jpeg_thread(void *v_ctx);
 static void *_raw_thread(void *v_ctx);
 static void *_h264_thread(void *v_ctx);
+static void *_rv1126_thread(void *v_ctx);
 #ifdef WITH_V4P
 static void *_drm_thread(void *v_ctx);
 #endif
@@ -145,15 +146,22 @@ void us_stream_loop(us_stream_s *stream) {
 	// 获取stream的运行时信息和捕获设备信息
 	us_stream_runtime_s *const run = stream->run;
 	us_capture_s *const cap = stream->cap;
+	us_fpsi_meta_s meta = {.online = false};
 
 	// 更新最后一次请求的时间戳
 	atomic_store(&run->http->last_request_ts, us_get_now_monotonic());
 
 	// 如果存在H264 sink，初始化H264编码器和相关帧 ?其他编码器就不需要初始化了?即使是表面上的?
 	if (stream->h264_sink != NULL) {
-		run->h264_enc = us_m2m_h264_encoder_init("H264", stream->h264_m2m_path, stream->h264_bitrate, stream->h264_gop);
-		run->h264_tmp_src = us_frame_init(); // input and output buffer is 512K
-		run->h264_dest = us_frame_init(); // input and output buffer is 512K
+		run->enc = us_m2m_h264_encoder_init("H264", stream->h264_m2m_path, stream->h264_bitrate, stream->h264_gop);
+		run->tmp_src = us_frame_init(); // input and output buffer is 512K
+		run->dest = us_frame_init(); // input and output buffer is 512K
+	}
+	if (stream->rv1126_sink != NULL){
+		//这里只初始化dest,因为这个玩意是用来临时存放编码数据的
+		// run->rv1126_enc = us_rv1126_encoder_init("H264", stream->rv1126_capture_path, stream->h264_bitrate, stream->h264_gop);
+		run->rv1126_enc = us_rv1126_encoder_init(RV1126_ENCODER_FORMAT_H264, "/dev/video0");
+		run->dest = us_frame_init(); // input and output buffer is 512K
 	}
 
 	// 初始化循环，直到初始化成功
@@ -198,6 +206,7 @@ void us_stream_loop(us_stream_s *stream) {
 		CREATE_WORKER((stream->raw_sink != NULL), raw_ctx, _raw_thread, 2);
 		// 创建H264工作线程
 		CREATE_WORKER((stream->h264_sink != NULL), h264_ctx, _h264_thread, cap->run->n_bufs);
+		CREATE_WORKER((stream->rv1126_sink != NULL), rv1126_ctx, _rv1126_thread, cap->run->n_bufs);
 #		ifdef WITH_V4P
 		// 创建DRM工作线程
 		CREATE_WORKER((stream->drm != NULL), drm_ctx, _drm_thread, cap->run->n_bufs); // cppcheck-suppress assertWithSideEffect
@@ -210,16 +219,31 @@ void us_stream_loop(us_stream_s *stream) {
 		// 主循环，直到停止标志被设置
 		while (!atomic_load(&run->stop) && !atomic_load(&threads_stop)) {
 			us_capture_hwbuf_s *hw;
-			// 抓取硬件缓冲区
-			switch (us_capture_hwbuf_grab(cap, &hw)) {
-				case 0 ... INT_MAX: break; // 成功抓取缓冲区
-				case US_ERROR_NO_DATA: continue; // 抓取到损坏的帧
-				default: goto close; // 其他错误
+			if (stream->rv1126_sink != NULL){
+				// RV1126输入绑定了VENC,所以直接调过所有代码,获取编码后的帧就行
+				//get frame from venc
+				if (us_rv1126_get_frame(run->dest)){
+					// put h264 to memsink
+					meta.online = !us_memsink_server_put(stream->h264_sink, run->dest, &run->h264_key_requested);
+					us_fpsi_update(run->http->h264_fpsi, meta.online, &meta);
+				}
+			}else{
+				// 抓取硬件缓冲区
+				switch (us_capture_hwbuf_grab(cap, &hw)) {
+					case 0 ... INT_MAX: break; // 成功抓取缓冲区
+					case US_ERROR_NO_DATA: continue; // 抓取到损坏的帧
+					default: goto close; // 其他错误
+				}
 			}
+
+
 
 			// 更新元数据
 			us_fpsi_meta_s meta = {0};
-			us_fpsi_frame_to_meta(&hw->raw, &meta);
+			if (stream->rv1126_sink != NULL)
+				us_rv1126_encoder_update_meta(&meta);
+			else
+				us_fpsi_frame_to_meta(&hw->raw, &meta);
 			us_fpsi_update(run->http->captured_fpsi, true, &meta);
 
 #			ifdef WITH_GPIO
@@ -247,7 +271,7 @@ void us_stream_loop(us_stream_s *stream) {
 			// 将缓冲区加入释放队列
 			us_queue_put(releasers[hw->buf.index].queue, hw, 0); // Plan to release
 
-			// 检查是否需要自杀
+			// 检查是否需要自杀,默认好像是一天,如果没有人连上来就把当前进程干了
 			_stream_check_suicide(stream);
 			// 如果需要减速且没有客户端，则减速
 			if (stream->slowdown && !_stream_has_any_clients_cached(stream)) {
@@ -273,6 +297,7 @@ void us_stream_loop(us_stream_s *stream) {
 		// 删除DRM工作线程
 		DELETE_WORKER(drm_ctx);
 #		endif
+		DELETE_WORKER(rv1126_ctx);
 		// 删除H264工作线程
 		DELETE_WORKER(h264_ctx);
 		// 删除RAW工作线程
@@ -303,15 +328,17 @@ void us_stream_loop(us_stream_s *stream) {
 	}
 
 	// 删除H264编码器和相关帧
-	US_DELETE(run->h264_enc, us_m2m_encoder_destroy);
-	US_DELETE(run->h264_tmp_src, us_frame_destroy);
-	US_DELETE(run->h264_dest, us_frame_destroy);
+	US_DELETE(run->rv1126_enc, us_rv1126_encoder_deinit);
+	US_DELETE(run->enc, us_m2m_encoder_destroy);
+	US_DELETE(run->tmp_src, us_frame_destroy);
+	US_DELETE(run->dest, us_frame_destroy);
 }
 
 void us_stream_loop_break(us_stream_s *stream) {
 	atomic_store(&stream->run->stop, true);
 }
 
+// 这个代码有问题,如果队列头部的引用始终不被释放,那就会一直卡主
 static void *_releaser_thread(void *v_ctx) {
 	US_THREAD_SETTLE("str_rel")
 	_releaser_context_s *ctx = v_ctx;
@@ -424,6 +451,35 @@ static void *_raw_thread(void *v_ctx) {
 	return NULL;
 }
 
+static void *_rv1126_thread(void *v_ctx) {
+	US_THREAD_SETTLE("rv1126_h264");
+	_worker_context_s *ctx = v_ctx;
+	us_stream_s *stream = ctx->stream;
+	us_stream_runtime_s *run = stream->run;
+	us_fpsi_meta_s meta = {.online = false};
+
+	ldf grab_after_ts = 0;
+	while (!atomic_load(ctx->stop)) {
+		// RV1126输入绑定了VENC,所以直接调过所有代码,获取编码后的帧就行
+
+		// 检查是否有客户端在观看，如果没有则跳过编码
+		// 真的有必要每次都检测这玩意?
+		if (!us_memsink_server_check(stream->rv1126_sink, NULL)) {
+			US_LOG_VERBOSE("H264: Passed encoding because nobody is watching");
+			usleep(5 * 1000);
+			continue;
+		}
+		//get frame from venc
+		if (us_rv1126_get_frame(run->dest)){
+			// put h264 to memsink
+			meta.online = !us_memsink_server_put(stream->h264_sink, run->dest, &run->h264_key_requested);
+			us_fpsi_update(run->http->h264_fpsi, meta.online, &meta);
+		}
+
+	}
+	return NULL;
+}
+
 static void *_h264_thread(void *v_ctx) {
 	US_THREAD_SETTLE("str_h264");
 	_worker_context_s *ctx = v_ctx;
@@ -452,7 +508,7 @@ static void *_h264_thread(void *v_ctx) {
 		// M2M编码器在1080p时，如果超过30 FPS会增加100毫秒的延迟。
 		// 因此有两种模式：小视频为60 FPS，大视频（1920x1080或1200）为30 FPS。
 		// 下一帧的抓取时间不早于FPS要求的时间，减去一些误差（如果抓取不均匀） - 略少于1/60，约为1/30的三分之一。
-		const uint fps_limit = stream->run->h264_enc->run->fps_limit;
+		const uint fps_limit = stream->run->enc->run->fps_limit;
 		if (fps_limit > 0) {
 			const ldf frame_interval = (ldf)1 / fps_limit;
 			grab_after_ts = hw->raw.grab_ts + frame_interval - 0.01;
@@ -540,6 +596,19 @@ static us_capture_hwbuf_s *_get_latest_hw(us_queue_s *queue) {
 	return hw;
 }
 
+
+static us_capture_hwbuf_s *_get_rv1126_latest_hw(us_queue_s *queue) {
+	us_capture_hwbuf_s *hw;
+	 if (us_queue_get(queue, (void**)&hw, 0.1) < 0) {
+	 	return NULL;
+	 }
+	 while (!us_queue_is_empty(queue)) { // Берем только самый свежий кадр
+	 	us_capture_hwbuf_decref(hw);
+	 	assert(!us_queue_get(queue, (void**)&hw, 0));
+	 }
+	return hw;
+}
+
 static bool _stream_has_jpeg_clients_cached(us_stream_s *stream) {
 	const us_stream_runtime_s *const run = stream->run;
 	return (
@@ -575,6 +644,7 @@ static int _stream_init_loop(us_stream_s *stream) {
 		UPDATE_SINK(stream->jpeg_sink);
 		UPDATE_SINK(stream->raw_sink);
 		UPDATE_SINK(stream->h264_sink);
+		UPDATE_SINK(stream->rv1126_sink);
 #		undef UPDATE_SINK
 
 		_stream_check_suicide(stream);
@@ -690,18 +760,18 @@ static void _stream_encode_expose_h264(us_stream_s *stream, const us_frame_s *fr
 
 	us_fpsi_meta_s meta = {.online = false};
 	if (us_is_jpeg(frame->format)) {
-		if (us_unjpeg(frame, run->h264_tmp_src, true) < 0) {
+		if (us_unjpeg(frame, run->tmp_src, true) < 0) {
 			goto done;
 		}
-		frame = run->h264_tmp_src;
+		frame = run->tmp_src;
 	}
 	if (run->h264_key_requested) {
 		US_LOG_INFO("H264: Requested keyframe by a sink client");
 		run->h264_key_requested = false;
 		force_key = true;
 	}
-	if (!us_m2m_encoder_compress(run->h264_enc, frame, run->h264_dest, force_key)) {
-		meta.online = !us_memsink_server_put(stream->h264_sink, run->h264_dest, &run->h264_key_requested);
+	if (!us_m2m_encoder_compress(run->enc, frame, run->dest, force_key)) {
+		meta.online = !us_memsink_server_put(stream->h264_sink, run->dest, &run->h264_key_requested);
 	}
 
 done:

@@ -40,6 +40,7 @@
 #include "blank.h"
 #include "encoder.h"
 #include "m2m.h"
+#include "rv1126.h"
 
 
 typedef struct {
@@ -61,9 +62,10 @@ typedef struct {
 typedef struct {
 	us_stream_http_s	*http;
 
-	us_m2m_encoder_s	*h264_enc;
-	us_frame_s			*h264_tmp_src;
-	us_frame_s			*h264_dest;
+	us_m2m_encoder_s	*enc;
+	us_rv1126_encoder_s	*rv1126_enc;
+	us_frame_s			*tmp_src;
+	us_frame_s			*dest;
 	bool				h264_key_requested;
 
 	us_blank_s			*blank;
@@ -83,8 +85,12 @@ typedef struct {
 	us_memsink_s	*raw_sink;
 
 	us_memsink_s	*h264_sink;
+	us_memsink_s	*rv1126_sink;
+	char			*rv1126_capture_path;
 	uint			h264_bitrate;
 	uint			h264_gop;
+	uint			h265_bitrate;
+	uint			h265_gop;
 	char			*h264_m2m_path;
 
 #	ifdef WITH_V4P

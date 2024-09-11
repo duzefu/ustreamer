@@ -202,23 +202,29 @@ int us_capture_open(us_capture_s *cap) {
 	US_LOG_INFO("Using V4L2 device: %s", cap->path);
 
 	if (_capture_open_check_cap(cap) < 0) {
+		US_LOG_ERROR("Device not supported");
 		goto error;
 	}
 	if (_capture_apply_resolution(cap, cap->width, cap->height, cap->run->hz)) {
+		US_LOG_ERROR("Resolution not supported");
 		goto error;
 	}
 	if (cap->dv_timings && _capture_open_dv_timings(cap, true) < 0) {
+		US_LOG_ERROR("DV timings not supported");
 		goto error;
 	}
 	if (_capture_open_format(cap, true) < 0) {
+		US_LOG_ERROR("Format not supported");
 		goto error;
 	}
 	_capture_open_hw_fps(cap);
 	_capture_open_jpeg_quality(cap);
 	if (_capture_open_io_method(cap) < 0) {
+		US_LOG_ERROR("IO method not supported")
 		goto error;
 	}
 	if (_capture_open_queue_buffers(cap) < 0) {
+		US_LOG_ERROR("Failed to allocate buffers");
 		goto error;
 	}
 	if (cap->dma_export && !us_is_jpeg(run->format)) {
@@ -304,35 +310,40 @@ void us_capture_close(us_capture_s *cap) {
 }
 
 int us_capture_hwbuf_grab(us_capture_s *cap, us_capture_hwbuf_s **hw) {
-	// Это сложная функция, которая делает сразу много всего, чтобы получить новый фрейм.
-	//   - Вызывается _capture_wait_buffer() с select() внутри, чтобы подождать новый фрейм
-	//     или эвент V4L2. Обработка эвентов более приоритетна, чем кадров.
-	//   - Если есть новые фреймы, то пропустить их все, пока не закончатся и вернуть
-	//     самый-самый свежий, содержащий при этом валидные данные.
-	//   - Если таковых не нашлось, вернуть US_ERROR_NO_DATA.
-	//   - Ошибка -1 возвращается при любых сбоях.
+	// 这是一个复杂的函数，它做了很多事情来获取一个新的帧。
+	//   - 调用 _capture_wait_buffer() 函数，内部使用 select() 来等待新的帧或 V4L2 事件。
+	//     处理事件比处理帧更优先。
+	//   - 如果有新的帧，则跳过所有帧，直到没有新的帧为止，并返回最新的包含有效数据的帧。
+	//   - 如果没有找到这样的帧，则返回 US_ERROR_NO_DATA。
+	//   - 任何错误都返回 -1。
 
+	// 调用 _capture_wait_buffer() 函数来等待新的缓冲区或 V4L2 事件
 	if (_capture_wait_buffer(cap) < 0) {
 		return -1;
 	}
 
+	// 获取捕获的运行时信息
 	us_capture_runtime_s *const run = cap->run;
 
+	// 初始化缓冲区指针
 	*hw = NULL;
 
+	// 初始化 v4l2_buffer 结构体来存储缓冲区信息
 	struct v4l2_buffer buf = {0};
 	struct v4l2_plane buf_planes[VIDEO_MAX_PLANES] = {0};
 	if (run->capture_mplane) {
-		// Just for _v4l2_buffer_copy(), buf.length is not needed here
+		// 仅用于 _v4l2_buffer_copy()，这里不需要 buf.length
 		buf.m.planes = buf_planes;
 	}
 
+	// 标志位来跟踪缓冲区是否被捕获
 	bool buf_got = false;
 	uint skipped = 0;
 	bool broken = false;
 
 	_LOG_DEBUG("Grabbing hw buffer ...");
 
+	// 循环来捕获缓冲区
 	do {
 		struct v4l2_buffer new = {0};
 		struct v4l2_plane new_planes[VIDEO_MAX_PLANES] = {0};
@@ -343,9 +354,11 @@ int us_capture_hwbuf_grab(us_capture_s *cap, us_capture_hwbuf_s **hw) {
 			new.m.planes = new_planes;
 		}
 		
+		// 尝试捕获新的缓冲区
 		const bool new_got = (us_xioctl(run->fd, VIDIOC_DQBUF, &new) >= 0);
 
 		if (new_got) {
+			// 检查缓冲区索引是否有效
 			if (new.index >= run->n_bufs) {
 				_LOG_ERROR("V4L2 error: grabbed invalid HW buffer=%u, n_bufs=%u", new.index, run->n_bufs);
 				return -1;
@@ -354,16 +367,19 @@ int us_capture_hwbuf_grab(us_capture_s *cap, us_capture_hwbuf_s **hw) {
 #			define GRABBED(x_buf) run->bufs[x_buf.index].grabbed
 #			define FRAME_DATA(x_buf) run->bufs[x_buf.index].raw.data
 
+			// 检查缓冲区是否已经被使用
 			if (GRABBED(new)) {
 				_LOG_ERROR("V4L2 error: grabbed HW buffer=%u is already used", new.index);
 				return -1;
 			}
 			GRABBED(new) = true;
 
+			// 更新多平面缓冲区的数据大小
 			if (run->capture_mplane) {
 				new.bytesused = new.m.planes[0].bytesused;
 			}
 
+			// 检查缓冲区是否有效
 			broken = !_capture_is_buffer_valid(cap, &new, FRAME_DATA(new));
 			if (broken) {
 				_LOG_DEBUG("Releasing HW buffer=%u (broken frame) ...", new.index);
@@ -375,6 +391,7 @@ int us_capture_hwbuf_grab(us_capture_s *cap, us_capture_hwbuf_s **hw) {
 				continue;
 			}
 
+			// 如果之前有捕获的缓冲区，则释放它
 			if (buf_got) {
 				if (us_xioctl(run->fd, VIDIOC_QBUF, &buf) < 0) {
 					_LOG_PERROR("Can't release HW buffer=%u (skipped frame)", buf.index);
@@ -388,15 +405,17 @@ int us_capture_hwbuf_grab(us_capture_s *cap, us_capture_hwbuf_s **hw) {
 #			undef GRABBED
 #			undef FRAME_DATA
 
+			// 将新缓冲区的信息复制到当前缓冲区
 			_v4l2_buffer_copy(&new, &buf);
 			buf_got = true;
 
 		} else {
+			// 处理捕获缓冲区的错误
 			if (errno == EAGAIN) {
 				if (buf_got) {
-					break; // Process any latest valid frame
+					break; // 处理任何最新的有效帧
 				} else if (broken) {
-					return US_ERROR_NO_DATA; // If we have only broken frames on this capture session
+					return US_ERROR_NO_DATA; // 如果在此捕获会话中只有损坏的帧
 				}
 			}
 			_LOG_PERROR("Can't grab HW buffer");
@@ -404,6 +423,7 @@ int us_capture_hwbuf_grab(us_capture_s *cap, us_capture_hwbuf_s **hw) {
 		}
 	} while (true);
 
+	// 更新捕获的缓冲区指针
 	*hw = &run->bufs[buf.index];
 	atomic_store(&(*hw)->refs, 0);
 	(*hw)->raw.dma_fd = (*hw)->dma_fd;

@@ -99,6 +99,7 @@ enum _US_OPT_VALUES {
 	_O_H264_BITRATE,
 	_O_H264_GOP,
 	_O_H264_M2M_DEVICE,
+	_O_RV1126_CAPTURE_DEVICE,	
 #	undef ADD_SINK
 
 #	ifdef WITH_V4P
@@ -203,6 +204,7 @@ static const struct option _LONG_OPTS[] = {
 	{"h264-bitrate",			required_argument,	NULL,	_O_H264_BITRATE},
 	{"h264-gop",				required_argument,	NULL,	_O_H264_GOP},
 	{"h264-m2m-device",			required_argument,	NULL,	_O_H264_M2M_DEVICE},
+	{"rv1126-capture-device",			required_argument,	NULL,	_O_RV1126_CAPTURE_DEVICE},
 	// Compatibility
 	{"sink",					required_argument,	NULL,	_O_JPEG_SINK},
 	{"sink-mode",				required_argument,	NULL,	_O_JPEG_SINK_MODE},
@@ -464,6 +466,7 @@ int options_parse(us_options_s *options, us_capture_s *cap, us_encoder_s *enc, u
 			case _O_H264_BITRATE:			OPT_NUMBER("--h264-bitrate", stream->h264_bitrate, 25, 20000, 0);
 			case _O_H264_GOP:				OPT_NUMBER("--h264-gop", stream->h264_gop, 0, 60, 0);
 			case _O_H264_M2M_DEVICE:		OPT_SET(stream->h264_m2m_path, optarg);
+			case _O_RV1126_CAPTURE_DEVICE:		OPT_SET(stream->rv1126_capture_path, optarg);
 
 #			ifdef WITH_V4P
 			case _O_V4P:
@@ -720,6 +723,7 @@ static void _help(FILE *fp, const us_capture_s *cap, const us_encoder_s *enc, co
 	SAY("    --h264-bitrate <kbps>  ───────── H264 bitrate in Kbps. Default: %u.\n", stream->h264_bitrate);
 	SAY("    --h264-gop <N>  ──────────────── Interval between keyframes. Default: %u.\n", stream->h264_gop);
 	SAY("    --h264-m2m-device </dev/path>  ─ Path to V4L2 M2M encoder device. Default: auto select.\n");
+	SAY("    --rv1126-capture-device </dev/path>  ─ Path to capture device like lt6911c. Default: /dev/video0.\n");
 #	ifdef WITH_V4P
 	SAY("Passthrough options for PiKVM V4:");
 	SAY("═════════════════════════════════");

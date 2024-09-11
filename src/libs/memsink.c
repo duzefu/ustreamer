@@ -158,37 +158,43 @@ bool us_memsink_server_check(us_memsink_s *sink, const us_frame_s *frame) {
 	return false;
 }
 
+// 将帧数据放入内存sink的函数
 int us_memsink_server_put(us_memsink_s *sink, const us_frame_s *frame, bool *key_requested) {
-	assert(sink->server);
+	assert(sink->server); // 确保是服务器端调用
 
-	const ldf now = us_get_now_monotonic();
+	const ldf now = us_get_now_monotonic(); // 获取当前时间戳
 
+	// 检查帧数据大小是否超过内存sink的容量
 	if (frame->used > sink->data_size) {
 		US_LOG_ERROR("%s-sink: Can't put frame: is too big (%zu > %zu)",
 			sink->name, frame->used, sink->data_size);
 		return 0;
 	}
 
+	// 尝试锁定内存区域，等待时间为1秒
 	if (us_flock_timedwait_monotonic(sink->fd, 1) == 0) {
 		US_LOG_VERBOSE("%s-sink: >>>>> Exposing new frame ...", sink->name);
 
-		sink->mem->id = us_get_now_id();
+		sink->mem->id = us_get_now_id(); // 更新帧ID
 		if (sink->mem->key_requested && frame->key) {
-			sink->mem->key_requested = false;
+			sink->mem->key_requested = false; // 如果请求关键帧且当前帧是关键帧，则清除请求
 		}
-		if (key_requested != NULL) { // We don't need it for non-H264 sinks
+		if (key_requested != NULL) { // 对于非H264 sink，不需要key_requested
 			*key_requested = sink->mem->key_requested;
 		}
 
+		// 将帧数据复制到内存sink中
 		memcpy(us_memsink_get_data(sink->mem), frame->data, frame->used);
 		sink->mem->used = frame->used;
-		US_FRAME_COPY_META(frame, sink->mem);
+		US_FRAME_COPY_META(frame, sink->mem); // 复制帧元数据
 
-		sink->mem->magic = US_MEMSINK_MAGIC;
-		sink->mem->version = US_MEMSINK_VERSION;
+		sink->mem->magic = US_MEMSINK_MAGIC; // 设置magic number以标识有效数据
+		sink->mem->version = US_MEMSINK_VERSION; // 设置协议版本
 
+		// 更新是否有客户端的标志
 		atomic_store(&sink->has_clients, (sink->mem->last_client_ts + sink->client_ttl > us_get_now_monotonic()));
 
+		// 解锁内存区域
 		if (flock(sink->fd, LOCK_UN) < 0) {
 			US_LOG_PERROR("%s-sink: Can't unlock memory", sink->name);
 			return -1;
@@ -196,10 +202,10 @@ int us_memsink_server_put(us_memsink_s *sink, const us_frame_s *frame, bool *key
 		US_LOG_VERBOSE("%s-sink: Exposed new frame; full exposition time = %.3Lf",
 			sink->name, us_get_now_monotonic() - now);
 
-	} else if (errno == EWOULDBLOCK) {
+	} else if (errno == EWOULDBLOCK) { // 如果内存区域正忙
 		US_LOG_VERBOSE("%s-sink: ===== Shared memory is busy now; frame skipped", sink->name);
 
-	} else {
+	} else { // 其他锁定错误
 		US_LOG_PERROR("%s-sink: Can't lock memory", sink->name);
 		return -1;
 	}

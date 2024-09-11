@@ -22,65 +22,64 @@
 
 #pragma once
 
-#include <pthread.h>
-
 #include "../libs/types.h"
 #include "../libs/frame.h"
-#include "../libs/capture.h"
+#include "../libs/fpsi.h"
 
-#include "workers.h"
-#include "m2m.h"
-#include "rv1126.h"
-
-
-#define ENCODER_TYPES_STR "CPU, HW, M2M-VIDEO, M2M-IMAGE"
-
-
-typedef enum {
-	US_ENCODER_TYPE_CPU,
-	US_ENCODER_TYPE_HW,
-	US_ENCODER_TYPE_M2M_VIDEO,
-	US_ENCODER_TYPE_M2M_IMAGE,
-	US_ENCODER_TYPE_RV1126_MJPEG,
-	US_ENCODER_TYPE_RV1126_H264,
-	US_ENCODER_TYPE_RV1126_H265,
-} us_encoder_type_e;
 
 typedef struct {
-	us_encoder_type_e	type;
-	uint				quality;
-	pthread_mutex_t		mutex;
-
-	uint				n_m2ms;
-	uint				n_rv1126_encoder;
-	us_m2m_encoder_s	**m2ms;
-	us_rv1126_encoder_s	**rv1126_encoder;
-
-	us_workers_pool_s	*pool;
-} us_encoder_runtime_s;
+	u8	*data;
+	uz	allocated;
+} us_rv1126_buffer_s;
 
 typedef struct {
-	us_encoder_type_e	type;
-	uint				n_workers;
-	char				*m2m_path;
+	int				fd;
+	uint			fps_limit;
+	us_rv1126_buffer_s	*input_bufs;
+	uint			n_input_bufs;
+	us_rv1126_buffer_s	*output_bufs;
+	uint			n_output_bufs;
 
-	us_encoder_runtime_s *run;
-} us_encoder_s;
+	uint	p_width;
+	uint	p_height;
+	uint	p_input_format;
+	uint	p_stride;
+
+	bool	ready;
+	int		last_online;
+	ldf		last_encode_ts;
+} us_rv1126_encoder_runtime_s;
+
+
+
+enum RV1126_ENCODER_FORMAT{
+	RV1126_ENCODER_FORMAT_H264=0,
+	RV1126_ENCODER_FORMAT_H265,
+	RV1126_ENCODER_FORMAT_MJPEG,
+	RV1126_ENCODER_FORMAT_JPEG,
+	RV1126_ENCODER_FORMAT_MAX,
+};
+
+enum RV1126_RAW_FORMAT{
+	RV1126_RAW_FORMAT_YUYV422=0,
+	RV1126_RAW_FORMAT_YUYV420,
+	RV1126_RAW_FORMAT_MAX,
+};
 
 typedef struct {
-	us_encoder_s		*enc;
-	us_capture_hwbuf_s	*hw;
-	us_frame_s			*dest;
-} us_encoder_job_s;
+	char	*name;
+	char	*dev_path;
+	enum RV1126_ENCODER_FORMAT	output_format;
+	uint	bitrate;
+	uint	gop;
+	uint	quality;
+	bool	allow_dma;
 
+	us_rv1126_encoder_runtime_s *run;
+} us_rv1126_encoder_s;
 
-us_encoder_s *us_encoder_init(void);
-void us_encoder_destroy(us_encoder_s *enc);
+us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_format, const char* capture_device);
+int us_rv1126_encoder_deinit(us_rv1126_encoder_s* enc);
 
-int us_encoder_parse_type(const char *str);
-const char *us_encoder_type_to_string(us_encoder_type_e type);
-
-void us_encoder_open(us_encoder_s *enc, us_capture_s *cap);
-void us_encoder_close(us_encoder_s *enc);
-
-void us_encoder_get_runtime_params(us_encoder_s *enc, us_encoder_type_e *type, uint *quality);
+int us_rv1126_encoder_compress(us_rv1126_encoder_s *enc, const us_frame_s *src, us_frame_s *dest, bool force_key);
+int us_rv1126_get_meta(us_fpsi_meta_s* meta);
