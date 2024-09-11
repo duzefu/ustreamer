@@ -241,7 +241,7 @@ void us_stream_loop(us_stream_s *stream) {
 			// 更新元数据
 			us_fpsi_meta_s meta = {0};
 			if (stream->rv1126_sink != NULL)
-				us_rv1126_encoder_update_meta(&meta);
+				us_rv1126_get_meta(&meta);
 			else
 				us_fpsi_frame_to_meta(&hw->raw, &meta);
 			us_fpsi_update(run->http->captured_fpsi, true, &meta);
