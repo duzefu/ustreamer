@@ -69,8 +69,8 @@ static bool _worker_run_job(us_worker_s *wr);
 us_encoder_s *us_encoder_init(void) {
 	us_encoder_runtime_s *run;
 	US_CALLOC(run, 1);
-	run->type = US_ENCODER_TYPE_CPU;
-	run->quality = 80;
+	run->type = US_ENCODER_TYPE_RV1126_H264;
+	run->quality = 0;
 	US_MUTEX_INIT(run->mutex);
 
 	us_encoder_s *enc;
@@ -127,6 +127,7 @@ void us_encoder_open(us_encoder_s *enc, us_capture_s *cap) {
 		type = US_ENCODER_TYPE_HW;
 	}
 
+	US_LOG_DEBUG("!!!!!!!!!!!!!type==%d ...", (type)); // 准备M2M编码器
 	if (type == US_ENCODER_TYPE_HW) {
 		if (us_is_jpeg(cr->format)) {
 			quality = cr->jpeg_quality;
@@ -155,7 +156,21 @@ void us_encoder_open(us_encoder_s *enc, us_capture_s *cap) {
 	} else if (type == US_ENCODER_TYPE_RV1126_H264 || type == US_ENCODER_TYPE_RV1126_H265 || type == US_ENCODER_TYPE_RV1126_MJPEG) {
 		n_workers = 1; //1126不需要多个编码器
 		// 这里应是在初始化单独编码某一帧的编码工具
-		US_LOG_DEBUG("Preparing RV1126-%d encoder ...", (type)); // 准备M2M编码器
+		char name[64];
+		switch (type) {
+		case US_ENCODER_TYPE_RV1126_H264:
+			sprintf(name, "rv1126_h264_encoder");
+			break;
+		case US_ENCODER_TYPE_RV1126_H265:
+			sprintf(name, "rv1126_h265_encoder");
+			break;
+		case US_ENCODER_TYPE_RV1126_MJPEG:
+			sprintf(name, "rv1126_mjpeg_encoder");
+			break;
+		default:
+			break;
+		}
+		US_LOG_DEBUG("Preparing %s encoder ...", name); // 准备M2M编码器
 		// 这里的代码不需要了,因为RV1126编码器是单线程的,不需要指定好几个线程,让他们使用不同的编码器来处理编码
 		// 对应的代码在_worker_run_job
 		// if (run->rv1126_encoder == NULL) {

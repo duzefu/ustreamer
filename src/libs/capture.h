@@ -109,13 +109,13 @@ typedef struct {
 	uint				jpeg_quality;
 	v4l2_std_id			standard;
 	enum v4l2_memory	io_method;
-	bool				dv_timings;
+	bool				dv_timings; //是否启用或配置数字视频定时（Digital Video Timings） 它允许设备根据输入信号的定时参数自动调整捕获设置
 	uint				n_bufs;
 	bool				dma_export;
 	bool				dma_required;
 	uint				desired_fps;
 	uz					min_frame_size;
-	bool				persistent;
+	bool				persistent; //是否启用持久性配置（Persistent Configuration）。持久性配置是指在设备重新启动或重新连接时，保持之前的配置不变。
 	uint				timeout;
 	us_controls_s 		ctl;
 	us_capture_runtime_s *run;

@@ -157,10 +157,10 @@ void us_stream_loop(us_stream_s *stream) {
 		run->tmp_src = us_frame_init(); // input and output buffer is 512K
 		run->dest = us_frame_init(); // input and output buffer is 512K
 	}
-	if (stream->rv1126_sink != NULL){
+	// if (stream->rv1126_sink != NULL){
+	if (stream->enc->type == US_ENCODER_TYPE_RV1126_H264 || stream->enc->type == US_ENCODER_TYPE_RV1126_H265 || stream->enc->type == US_ENCODER_TYPE_RV1126_MJPEG){
 		//这里只初始化dest,因为这个玩意是用来临时存放编码数据的
 		// run->rv1126_enc = us_rv1126_encoder_init("H264", stream->rv1126_capture_path, stream->h264_bitrate, stream->h264_gop);
-		run->rv1126_enc = us_rv1126_encoder_init(RV1126_ENCODER_FORMAT_H264, "/dev/video0");
 		run->dest = us_frame_init(); // input and output buffer is 512K
 	}
 
@@ -206,7 +206,8 @@ void us_stream_loop(us_stream_s *stream) {
 		CREATE_WORKER((stream->raw_sink != NULL), raw_ctx, _raw_thread, 2);
 		// 创建H264工作线程
 		CREATE_WORKER((stream->h264_sink != NULL), h264_ctx, _h264_thread, cap->run->n_bufs);
-		CREATE_WORKER((stream->rv1126_sink != NULL), rv1126_ctx, _rv1126_thread, cap->run->n_bufs);
+		// CREATE_WORKER((stream->rv1126_sink != NULL), rv1126_ctx, _rv1126_thread, cap->run->n_bufs);
+		// CREATE_WORKER(true, rv1126_ctx, _rv1126_thread, cap->run->n_bufs);
 #		ifdef WITH_V4P
 		// 创建DRM工作线程
 		CREATE_WORKER((stream->drm != NULL), drm_ctx, _drm_thread, cap->run->n_bufs); // cppcheck-suppress assertWithSideEffect
@@ -219,13 +220,30 @@ void us_stream_loop(us_stream_s *stream) {
 		// 主循环，直到停止标志被设置
 		while (!atomic_load(&run->stop) && !atomic_load(&threads_stop)) {
 			us_capture_hwbuf_s *hw;
-			if (stream->rv1126_sink != NULL){
+			if (stream->enc->type == US_ENCODER_TYPE_RV1126_H264 || stream->enc->type == US_ENCODER_TYPE_RV1126_H265 || stream->enc->type == US_ENCODER_TYPE_RV1126_MJPEG){
 				// RV1126输入绑定了VENC,所以直接调过所有代码,获取编码后的帧就行
 				//get frame from venc
 				if (us_rv1126_get_frame(run->dest)){
 					// put h264 to memsink
-					meta.online = !us_memsink_server_put(stream->h264_sink, run->dest, &run->h264_key_requested);
-					us_fpsi_update(run->http->h264_fpsi, meta.online, &meta);
+					// if (stream->rv1126_sink){
+						// meta.online = !us_memsink_server_put(stream->jpeg_sink, run->dest, &run->h264_key_requested);
+						// us_fpsi_update(run->http->h264_fpsi, meta.online, &meta);
+
+						// 把数据塞进jpeg的环形队列里面
+						int ri;
+						while ((ri = us_ring_producer_acquire(run->http->jpeg_ring, 0)) < 0) {
+							if (atomic_load(&run->stop)) {
+								return;
+							}
+						}
+						us_frame_s *const dest = run->http->jpeg_ring->items[ri];
+						us_frame_copy(run->dest, dest);
+						us_ring_producer_release(run->http->jpeg_ring, ri);
+						// US_LOG_DEBUG("memsink_server_put jpeg frame %d",run->dest->used);
+						if (stream->jpeg_sink != NULL) {
+							us_memsink_server_put(stream->jpeg_sink, run->dest, NULL);
+						}
+					// }
 				}
 			}else{
 				// 抓取硬件缓冲区
@@ -240,7 +258,7 @@ void us_stream_loop(us_stream_s *stream) {
 
 			// 更新元数据
 			us_fpsi_meta_s meta = {0};
-			if (stream->rv1126_sink != NULL)
+			if (stream->enc->type == US_ENCODER_TYPE_RV1126_H264 || stream->enc->type == US_ENCODER_TYPE_RV1126_H265 || stream->enc->type == US_ENCODER_TYPE_RV1126_MJPEG)
 				us_rv1126_get_meta(&meta);
 			else
 				us_fpsi_frame_to_meta(&hw->raw, &meta);
@@ -252,16 +270,17 @@ void us_stream_loop(us_stream_s *stream) {
 #			endif
 
 			// 定义将硬件缓冲区加入队列的宏
-#			define QUEUE_HW(x_ctx) if (x_ctx != NULL) { \
-					us_capture_hwbuf_incref(hw); \
-					us_queue_put(x_ctx->queue, hw, 0); \
-				}
-			// 将缓冲区加入JPEG队列
-			QUEUE_HW(jpeg_ctx);
-			// 将缓冲区加入RAW队列
-			QUEUE_HW(raw_ctx);
-			// 将缓冲区加入H264队列
-			QUEUE_HW(h264_ctx);
+// #			define QUEUE_HW(x_ctx) if (x_ctx != NULL) { \
+// 					us_capture_hwbuf_incref(hw); \
+// 					us_queue_put(x_ctx->queue, hw, 0); \
+// 				}
+// 			// 将缓冲区加入JPEG队列
+			// 这么看的话,这里面获取到的就已经是编码后的mjpeg了
+// 			QUEUE_HW(jpeg_ctx); // 这里把原始输入塞进队列,在jpeg之类的线程里面通过_get_latest_hw()获取
+// 			// 将缓冲区加入RAW队列
+// 			QUEUE_HW(raw_ctx);
+// 			// 将缓冲区加入H264队列
+// 			QUEUE_HW(h264_ctx);
 #			ifdef WITH_V4P
 			// 将缓冲区加入DRM队列
 			QUEUE_HW(drm_ctx);
@@ -269,7 +288,7 @@ void us_stream_loop(us_stream_s *stream) {
 #			undef QUEUE_HW
 
 			// 将缓冲区加入释放队列
-			us_queue_put(releasers[hw->buf.index].queue, hw, 0); // Plan to release
+			// us_queue_put(releasers[hw->buf.index].queue, hw, 0); // Plan to release
 
 			// 检查是否需要自杀,默认好像是一天,如果没有人连上来就把当前进程干了
 			_stream_check_suicide(stream);
@@ -297,7 +316,7 @@ void us_stream_loop(us_stream_s *stream) {
 		// 删除DRM工作线程
 		DELETE_WORKER(drm_ctx);
 #		endif
-		DELETE_WORKER(rv1126_ctx);
+		// DELETE_WORKER(rv1126_ctx);
 		// 删除H264工作线程
 		DELETE_WORKER(h264_ctx);
 		// 删除RAW工作线程
@@ -370,6 +389,7 @@ done:
 }
 
 static void *_jpeg_thread(void *v_ctx) {
+	US_LOG_DEBUG("!!!!!!!!!!!!!!!!!_jpeg_thread");
 	US_THREAD_SETTLE("str_jpeg")
 	_worker_context_s *ctx = v_ctx;
 	us_stream_s *stream = ctx->stream;
@@ -432,6 +452,7 @@ static void *_jpeg_thread(void *v_ctx) {
 }
 
 static void *_raw_thread(void *v_ctx) {
+	US_LOG_DEBUG("!!!!!!!!!!!!!!!!!_raw_thread");
 	US_THREAD_SETTLE("str_raw");
 	_worker_context_s *ctx = v_ctx;
 
@@ -481,6 +502,7 @@ static void *_rv1126_thread(void *v_ctx) {
 }
 
 static void *_h264_thread(void *v_ctx) {
+	US_LOG_DEBUG("!!!!!!!!!!!!!!!!!_h264_thread");
 	US_THREAD_SETTLE("str_h264");
 	_worker_context_s *ctx = v_ctx;
 	us_stream_s *stream = ctx->stream;
@@ -668,6 +690,7 @@ static int _stream_init_loop(us_stream_s *stream) {
 				goto offline_and_retry;
 		}
 		us_encoder_open(stream->enc, stream->cap);
+		stream->run->rv1126_enc = us_rv1126_encoder_init(RV1126_ENCODER_FORMAT_H264, "/dev/video0");
 		return 0;
 
 	offline_and_retry:

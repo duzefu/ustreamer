@@ -6,7 +6,8 @@ MANPREFIX ?= $(PREFIX)/share/man
 
 CC ?= gcc
 PY ?= python3
-CFLAGS ?= -O3
+#CFLAGS ?= -O3
+CFLAGS ?= -g
 LDFLAGS ?=
 
 R_DESTDIR = $(if $(DESTDIR),$(shell realpath "$(DESTDIR)"),)

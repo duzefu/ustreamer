@@ -127,8 +127,8 @@ us_capture_s *us_capture_init(void) {
 	us_capture_s *cap;
 	US_CALLOC(cap, 1);
 	cap->path = "/dev/video0";
-	cap->width = 640;
-	cap->height = 480;
+	cap->width = 1920;
+	cap->height = 1080;
 	cap->format = V4L2_PIX_FMT_YUYV;
 	cap->jpeg_quality = 80;
 	cap->standard = V4L2_STD_UNKNOWN;
@@ -172,6 +172,7 @@ int us_capture_parse_io_method(const char *str) {
 	return -1;
 }
 
+// TODO: 我删掉了大部分的capture代码,因为我要让rk的vi接管就必须这么做
 int us_capture_open(us_capture_s *cap) {
 	us_capture_runtime_s *const run = cap->run;
 
@@ -189,61 +190,61 @@ int us_capture_open(us_capture_s *cap) {
 	}
 	_LOG_DEBUG("Capture device fd=%d opened", run->fd);
 
-	if (cap->dv_timings && cap->persistent) {
-		_LOG_DEBUG("Probing DV-timings or QuerySTD ...");
-		if (_capture_open_dv_timings(cap, false) < 0) {
-			US_ONCE_FOR(run->open_error_once, __LINE__, {
-				_LOG_ERROR("No signal from source");
-			});
-			goto error_no_signal;
-		}
-	}
+	// if (cap->dv_timings && cap->persistent) {
+	// 	_LOG_DEBUG("Probing DV-timings or QuerySTD ...");
+	// 	if (_capture_open_dv_timings(cap, false) < 0) {
+	// 		US_ONCE_FOR(run->open_error_once, __LINE__, {
+	// 			_LOG_ERROR("No signal from source");
+	// 		});
+	// 		goto error_no_signal;
+	// 	}
+	// }
 
-	US_LOG_INFO("Using V4L2 device: %s", cap->path);
+	// US_LOG_INFO("Using V4L2 device: %s", cap->path);
 
-	if (_capture_open_check_cap(cap) < 0) {
-		US_LOG_ERROR("Device not supported");
-		goto error;
-	}
-	if (_capture_apply_resolution(cap, cap->width, cap->height, cap->run->hz)) {
-		US_LOG_ERROR("Resolution not supported");
-		goto error;
-	}
-	if (cap->dv_timings && _capture_open_dv_timings(cap, true) < 0) {
-		US_LOG_ERROR("DV timings not supported");
-		goto error;
-	}
-	if (_capture_open_format(cap, true) < 0) {
-		US_LOG_ERROR("Format not supported");
-		goto error;
-	}
-	_capture_open_hw_fps(cap);
-	_capture_open_jpeg_quality(cap);
-	if (_capture_open_io_method(cap) < 0) {
-		US_LOG_ERROR("IO method not supported")
-		goto error;
-	}
-	if (_capture_open_queue_buffers(cap) < 0) {
-		US_LOG_ERROR("Failed to allocate buffers");
-		goto error;
-	}
-	if (cap->dma_export && !us_is_jpeg(run->format)) {
-		// uStreamer doesn't have any component that could handle JPEG capture via DMA
-		run->dma = !_capture_open_export_to_dma(cap);
-		if (!run->dma && cap->dma_required) {
-			goto error;
-		}
-	}
-	_capture_apply_controls(cap);
+	// if (_capture_open_check_cap(cap) < 0) {
+	// 	US_LOG_ERROR("Device not supported");
+	// 	goto error;
+	// }
+	// if (_capture_apply_resolution(cap, cap->width, cap->height, cap->run->hz)) {
+	// 	US_LOG_ERROR("Resolution not supported");
+	// 	goto error;
+	// }
+	// if (cap->dv_timings && _capture_open_dv_timings(cap, true) < 0) {
+	// 	US_LOG_ERROR("DV timings not supported");
+	// 	goto error;
+	// }
+	// if (_capture_open_format(cap, true) < 0) {
+	// 	US_LOG_ERROR("Format not supported");
+	// 	goto error;
+	// }
+	// _capture_open_hw_fps(cap);
+	// _capture_open_jpeg_quality(cap);
+	// if (_capture_open_io_method(cap) < 0) {
+	// 	US_LOG_ERROR("IO method not supported")
+	// 	goto error;
+	// }
+	// if (_capture_open_queue_buffers(cap) < 0) {
+	// 	US_LOG_ERROR("Failed to allocate buffers");
+	// 	goto error;
+	// }
+	// if (cap->dma_export && !us_is_jpeg(run->format)) {
+	// 	// uStreamer doesn't have any component that could handle JPEG capture via DMA
+	// 	run->dma = !_capture_open_export_to_dma(cap);
+	// 	if (!run->dma && cap->dma_required) {
+	// 		goto error;
+	// 	}
+	// }
+	// _capture_apply_controls(cap);
 
-	enum v4l2_buf_type type = run->capture_type;
-	if (us_xioctl(run->fd, VIDIOC_STREAMON, &type) < 0) {
-		_LOG_PERROR("Can't start capturing");
-		goto error;
-	}
-	run->streamon = true;
+	// enum v4l2_buf_type type = run->capture_type;
+	// if (us_xioctl(run->fd, VIDIOC_STREAMON, &type) < 0) {
+	// 	_LOG_PERROR("Can't start capturing");
+	// 	goto error;
+	// }
+	// run->streamon = true;
 
-	run->open_error_once = 0;
+	// run->open_error_once = 0;
 	_LOG_INFO("Capturing started");
 	return 0;
 
@@ -730,10 +731,11 @@ static int _capture_open_format(us_capture_s *cap, bool first) {
 	// Set format
 	_LOG_DEBUG("Probing device format=%s, stride=%u, resolution=%ux%u ...",
 		_format_to_string_supported(cap->format), stride, run->width, run->height);
-	if (us_xioctl(run->fd, VIDIOC_S_FMT, &fmt) < 0) {
-		_LOG_PERROR("Can't set device format");
-		return -1;
-	}
+	// TODO:删掉这里,因为被RK VI接管了,驱动已经设置不了了
+	// if (us_xioctl(run->fd, VIDIOC_S_FMT, &fmt) < 0) {
+	// 	_LOG_PERROR("Can't set device format");
+	// 	return -1;
+	// }
 
 	if (fmt.type != run->capture_type) {
 		_LOG_ERROR("Capture format mismatch, please report to the developer");
@@ -1047,8 +1049,8 @@ error:
 }
 
 static int _capture_apply_resolution(us_capture_s *cap, uint width, uint height, float hz) {
-	// Тут VIDEO_MIN_* не используются из-за странностей минимального разрешения при отсутствии сигнала
-	// у некоторых устройств, например TC358743
+	// 这里不使用 VIDEO_MIN_* 是因为某些设备在无信号时会有奇怪的最小分辨率
+	// 例如 TC358743
 	if (
 		width == 0 || width > US_VIDEO_MAX_WIDTH
 		|| height == 0 || height > US_VIDEO_MAX_HEIGHT
