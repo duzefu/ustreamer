@@ -131,6 +131,7 @@ enum _US_OPT_VALUES {
 	_O_NO_LOG_COLORS,
 
 	_O_FEATURES,
+	_O_VI_FORMAT,
 };
 
 static const struct option _LONG_OPTS[] = {
@@ -243,6 +244,7 @@ static const struct option _LONG_OPTS[] = {
 	{"help",					no_argument,		NULL,	_O_HELP},
 	{"version",					no_argument,		NULL,	_O_VERSION},
 	{"features",				no_argument,		NULL,	_O_FEATURES},
+	{"vi-format",              required_argument,  NULL,   _O_VI_FORMAT},
 
 	{NULL, 0, NULL, 0},
 };
@@ -507,6 +509,9 @@ int options_parse(us_options_s *options, us_capture_s *cap, us_encoder_s *enc, u
 			case _O_VERSION:	puts(US_VERSION); return 1;
 			case _O_FEATURES:	_features(); return 1;
 
+			case _O_VI_FORMAT:
+				OPT_NUMBER("--vi_formate", stream->vi_format, 0, 128, 0);
+
 			case 0:		break;
 			default:	return -1;
 		}
@@ -770,5 +775,6 @@ static void _help(FILE *fp, const us_capture_s *cap, const us_encoder_s *enc, co
 	SAY("    -h|--help  ─────── Print this text and exit.\n");
 	SAY("    -v|--version  ──── Print version and exit.\n");
 	SAY("    --features  ────── Print list of supported features.\n");
+	SAY("    --vi-format <format>    Set VI format (default: NV12)\n");
 #	undef SAY
 }

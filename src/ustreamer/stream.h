@@ -98,6 +98,7 @@ typedef struct {
 #	endif
 
 	us_stream_runtime_s	*run;
+	int 			vi_format; //TODO: ONLY FOR TETS, SHOULD BE REMOVED WHEN RELEASE
 } us_stream_s;
 
 

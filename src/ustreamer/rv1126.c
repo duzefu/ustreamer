@@ -25,7 +25,7 @@ RK_U32 vi_width = 1920;
 RK_U32 vi_height = 1080;
 RK_U32 venc_width = 1920;
 RK_U32 venc_height = 1080;
-RK_U32 vi_buffer_num = 3; // 增加可能会导致延迟增高,降低在cpu不行(或者不同帧处理时间有明显差异,典型情况就是跑模型)的情况下会丢帧
+RK_U32 vi_buffer_num = 5; // 增加可能会导致延迟增高,降低在cpu不行(或者不同帧处理时间有明显差异,典型情况就是跑模型)的情况下会丢帧
 RK_U32 Media_framerate = 60;
 RK_U32 Media_bitrate = 6*1024*1024*8;   // 3MBps (每秒产生3M数据)
 RK_S32 gop = 30;
@@ -33,13 +33,14 @@ RK_S32 gop = 30;
 static const VI_PIPE ViPipe = 0;
 static const VI_CHN ViChn = 0;
 static const VENC_CHN VencChn = 0;
+IMAGE_TYPE_E  vi_type = IMAGE_TYPE_NV12;
 CODEC_TYPE_E  enc_type = RK_CODEC_TYPE_MJPEG;
 MPP_CHN_S stSrcChn = {.enModId = RK_ID_VI , .s32ChnId = ViChn , .s32DevId = ViPipe};
 MPP_CHN_S stDestChn = {.enModId = RK_ID_VENC , .s32ChnId = VencChn , .s32DevId = 0 };
 
 
 // for test
-bool g_stream_save = true;
+bool g_stream_save = false;
 char* g_stream_save_path = "/tmp/test.mjpeg";
 FILE* g_stream_save_fd = NULL;
 
@@ -105,7 +106,7 @@ int us_rv1126_encoder_deinit(us_rv1126_encoder_s* enc){
 }
 
 
-us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_format, const char* capture_device){
+us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_format, const char* capture_device,int vi_format){
     int ret;
     us_rv1126_encoder_s* encoder = (us_rv1126_encoder_s*)malloc(sizeof(us_rv1126_encoder_s));
     encoder->allow_dma = false;
@@ -115,6 +116,8 @@ us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_fo
     encoder->name = "rv1126";
     encoder->output_format = output_format;
     encoder->quality = 50;
+
+    if (vi_format != 0 ) vi_type  == vi_format;
 
     if (g_stream_save){
         g_stream_save_fd = fopen(g_stream_save_path,"w");
@@ -141,7 +144,9 @@ us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_fo
 	vi_chn_attr.u32BufCnt = vi_buffer_num;
 	vi_chn_attr.u32Width = vi_width;
 	vi_chn_attr.u32Height = vi_height;
-	vi_chn_attr.enPixFmt = IMAGE_TYPE_YUV422P; //TODO: 根据input_format设置,也可能未必需要,因为可以配置6911输出固定的YUYV422
+	// vi_chn_attr.enPixFmt = IMAGE_TYPE_NV12; //TODO: 根据input_format设置,也可能未必需要,因为可以配置6911输出固定的YUYV422
+	vi_chn_attr.enPixFmt = vi_type; //TODO: 根据input_format设置,也可能未必需要,因为可以配置6911输出固定的YUYV422
+    US_LOG_INFO("start with vi format %d",vi_format);
 	vi_chn_attr.enWorkMode = VI_WORK_MODE_NORMAL;
     vi_chn_attr.enBufType = VI_CHN_BUF_TYPE_MMAP; // 这个好像是必须的,默认的DMA好像不支持
 	ret = RK_MPI_VI_SetChnAttr(ViPipe, ViChn, &vi_chn_attr);
@@ -154,8 +159,8 @@ us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_fo
 
 	VENC_CHN_ATTR_S venc_chn_attr;
 	memset(&venc_chn_attr, 0, sizeof(venc_chn_attr));
-	venc_chn_attr.stVencAttr.enType = RK_CODEC_TYPE_H264;
-	venc_chn_attr.stVencAttr.imageType = IMAGE_TYPE_YUYV422;
+	venc_chn_attr.stVencAttr.enType = enc_type;
+	venc_chn_attr.stVencAttr.imageType = vi_type;
 	venc_chn_attr.stVencAttr.u32PicWidth = vi_width;
 	venc_chn_attr.stVencAttr.u32PicHeight = vi_height;
 	venc_chn_attr.stVencAttr.u32VirWidth = venc_width;
@@ -190,7 +195,17 @@ us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_fo
         venc_chn_attr.stRcAttr.stMjpegCbr.fr32DstFrameRateNum = Media_framerate;
         venc_chn_attr.stRcAttr.stMjpegCbr.u32SrcFrameRateDen = 1;
         venc_chn_attr.stRcAttr.stMjpegCbr.u32SrcFrameRateNum = 60;
-
+    }else if (enc_type == RK_CODEC_TYPE_JPEG){
+        venc_chn_attr.stVencAttr.stAttrJpege.bSupportDCF = RK_TRUE;
+        venc_chn_attr.stVencAttr.stAttrJpege.stMPFCfg.u8LargeThumbNailNum = 2;
+        venc_chn_attr.stVencAttr.stAttrJpege.stMPFCfg.astLargeThumbNailSize[0]
+            .u32Width = 164;
+        venc_chn_attr.stVencAttr.stAttrJpege.stMPFCfg.astLargeThumbNailSize[0]
+            .u32Height = 128;
+        venc_chn_attr.stVencAttr.stAttrJpege.stMPFCfg.astLargeThumbNailSize[1]
+            .u32Width = 128;
+        venc_chn_attr.stVencAttr.stAttrJpege.stMPFCfg.astLargeThumbNailSize[1]
+            .u32Height = 164;
     }
 	ret = RK_MPI_VENC_CreateChn(VencChn, &venc_chn_attr);//venc_chn:0
 	if (ret) {
@@ -232,7 +247,7 @@ int us_rv1126_get_frame(us_frame_s* frame){
         US_LOG_ERROR("get VENC data faile");
         return false;
     }
-    // US_LOG_DEBUG("get frame size %d", RK_MPI_MB_GetSize(mb));
+    US_LOG_DEBUG("get frame size %d", RK_MPI_MB_GetSize(mb));
 
     // fill frame
     RK_S32 flag = RK_MPI_MB_GetFlag(mb);
@@ -246,12 +261,15 @@ int us_rv1126_get_frame(us_frame_s* frame){
     case RK_CODEC_TYPE_H265:
         // TODO: 标准v4l2里面没有定义H265的fourcc，这里不知道要怎么搞,也不确定是不是必须要有
         // frame->format = V4L2_PIX_FMT_H265;
+        frame->key = flag == VENC_NALU_ISLICE ? true : false; 
         break;
     case RK_CODEC_TYPE_H264:
         frame->format = V4L2_PIX_FMT_H264;
+        frame->key = flag == VENC_NALU_ISLICE ? true : false; 
         break;
     case RK_CODEC_TYPE_MJPEG:
         frame->format = V4L2_PIX_FMT_MJPEG;
+        frame->key = true;
         break;
     default:
         US_LOG_ERROR("Unknown encoder type %d", enc_type);
@@ -259,8 +277,7 @@ int us_rv1126_get_frame(us_frame_s* frame){
     }
 	frame->stride = 0;
 	frame->used = frame_size;
-    frame->encode_end_ts = us_get_now_monotonic();
-    frame->key = flag == VENC_NALU_ISLICE ? true : false; 
+    frame->grab_ts = frame->encode_begin_ts = frame->encode_end_ts  = us_get_now_monotonic();
     frame->gop = gop;
     frame->online = true;
     return true;

@@ -116,7 +116,9 @@ static char *_http_get_client_hostport(struct evhttp_request *request);
 		assert(!evhttp_add_header(evhttp_request_get_output_headers(x_request), x_key, x_value))
 
 
+FILE* savetestfile = NULL;
 us_server_s *us_server_init(us_stream_s *stream) {
+	savetestfile = fopen("/tmp/test.mjpeg","w");
 	us_server_exposed_s *exposed;
 	US_CALLOC(exposed, 1);
 	exposed->frame = us_frame_init();
@@ -151,6 +153,7 @@ us_server_s *us_server_init(us_stream_s *stream) {
 void us_server_destroy(us_server_s *server) {
 	us_server_runtime_s *const run = server->run;
 
+	fclose(savetestfile);
 	if (run->refresher != NULL) {
 		event_del(run->refresher);
 		event_free(run->refresher);
@@ -213,10 +216,13 @@ int us_server_listen(us_server_s *server) {
 		} else {
 			interval.tv_usec = 16000; // ~60fps
 		}
+		// 这里根据desired_fps设置了一个定时器,如果目标帧率是60,那一秒刷新时间是16ms左右,如果目标帧率是30,那么刷新时间是32ms左右,以此类推.
+		// 负责push输出的就是_http_refresher
 		assert((run->refresher = event_new(run->base, -1, EV_PERSIST, _http_refresher, server)) != NULL);
 		assert(!event_add(run->refresher, &interval));
 	}
 
+	// 设置HTTP超时时间
 	evhttp_set_timeout(run->http, server->timeout);
 
 	if (server->user[0] != '\0') {
@@ -582,6 +588,7 @@ static void _http_callback_stream(struct evhttp_request *request, void *v_server
 
 	PREPROCESS_REQUEST;
 
+	// 如果连接存在，创建一个新的 us_stream_client_s 结构体，并初始化它
 	struct evhttp_connection *const conn = evhttp_request_get_connection(request);
 	if (conn != NULL) {
 		us_stream_client_s *client;
@@ -612,8 +619,10 @@ static void _http_callback_stream(struct evhttp_request *request, void *v_server
 			free(name);
 		}
 
+		// 新客户端添加到服务器的客户端列表中
 		US_LIST_APPEND_C(run->stream_clients, client, run->stream_clients_count);
 
+		// 如果这是第一个客户端，更新相关状态（如 has_clients 标志和 GPIO 状态）
 		if (run->stream_clients_count == 1) {
 			atomic_store(&server->stream->run->http->has_clients, true);
 #			ifdef WITH_GPIO
@@ -634,6 +643,7 @@ static void _http_callback_stream(struct evhttp_request *request, void *v_server
 				_LOG_PERROR("Can't set TCP_NODELAY to the client %s", client->hostport);
 			}
 		}
+		// 设置缓冲事件回调，用于处理连接错误
 		bufferevent_setcb(buf_event, NULL, NULL, _http_callback_stream_error, (void*)client);
 		bufferevent_enable(buf_event, EV_READ);
 	} else {
@@ -653,25 +663,20 @@ static void _http_callback_stream_write(struct bufferevent *buf_event, void *v_c
 	struct evbuffer *buf;
 	_A_EVBUFFER_NEW(buf);
 
-	// В хроме и его производных есть фундаментальный баг: он отрисовывает
-	// фрейм с задержкой на один, как только ему придут заголовки следующего.
-	// В сочетании с drop_same_frames это дает значительный лаг стрима
-	// при большом количестве дропов (на статичном изображении, где внезапно
-	// что-то изменилось.
+	// 在 Chrome 及其衍生产品中存在一个根本性的错误：它会在接收到下一个帧的头部时延迟渲染当前帧。
+	// 结合 drop_same_frames 功能，这会导致在大量丢帧的情况下（例如在静态图像中突然发生变化时）
+	// 流媒体出现显著的延迟。
 	//
 	// https://bugs.chromium.org/p/chromium/issues/detail?id=527446
 	//
-	// Включение advance_headers заставляет стример отсылать заголовки
-	// будущего фрейма сразу после данных текущего, чтобы триггернуть отрисовку.
-	// Естественным следствием этого является невозможность установки заголовка
-	// Content-Length, так как предсказывать будущее мы еще не научились.
-	// Его наличие не требуется RFC, однако никаких стандартов на MJPEG over HTTP
-	// в природе не существует, и никто не может гарантировать, что отсутствие
-	// Content-Length не сломает вещание для каких-нибудь маргинальных браузеров.
+	// 启用 advance_headers 会强制流媒体在发送当前帧数据后立即发送下一个帧的头部，以触发渲染。
+	// 其自然结果是无法设置 Content-Length 头部，因为我们还无法预测未来。
+	// 虽然 RFC 并不要求 Content-Length，但 MJPEG over HTTP 并没有任何标准，
+	// 因此没有人能保证缺少 Content-Length 不会破坏某些边缘浏览器的流媒体播放。
 	//
-	// Кроме того, advance_headers форсит отключение заголовков X-UStreamer-*
-	// по тем же причинам, по которым у нас нет Content-Length.
+	// 此外，advance_headers 还会强制禁用 X-UStreamer-* 头部，原因与无法设置 Content-Length 相同。
 
+	// 1. 构建MJPEG头部信息
 #	define BOUNDARY "boundarydonotcross"
 
 #	define ADD_ADVANCE_HEADERS \
@@ -764,7 +769,10 @@ static void _http_callback_stream_write(struct bufferevent *buf_event, void *v_c
 		}
 	}
 
+	// 2.添加帧数据（JPEG 图像）到缓冲区
 	if (!client->zero_data) {
+		// if (savetestfile)
+		// 	fwrite((void*)ex->frame->data, ex->frame->used,1,savetestfile);
 		_A_EVBUFFER_ADD(buf, (void*)ex->frame->data, ex->frame->used);
 	}
 	_A_EVBUFFER_ADD_PRINTF(buf, RN "--" BOUNDARY RN);
@@ -773,6 +781,7 @@ static void _http_callback_stream_write(struct bufferevent *buf_event, void *v_c
 		ADD_ADVANCE_HEADERS;
 	}
 
+	// 3.将构建好的数据写入到客户端的连接缓冲区
 	assert(!bufferevent_write_buffer(buf_event, buf));
 	evbuffer_free(buf);
 
@@ -822,13 +831,14 @@ static void _http_send_stream(us_server_s *server, bool stream_updated, bool fra
 	bool has_clients = true;
 
 	US_LIST_ITERATE(run->stream_clients, client, { // cppcheck-suppress constStatement
+		// 对每个客户端，检查是否需要发送新帧
 		struct evhttp_connection *const conn = evhttp_request_get_connection(client->request);
 		if (conn != NULL) {
-			// Фикс для бага WebKit. При включенной опции дропа одинаковых фреймов,
-			// WebKit отрисовывает последний фрейм в серии с некоторой задержкой,
-			// и нужно послать два фрейма, чтобы серия была вовремя завершена.
-			// Это похоже на баг Blink (см. _http_callback_stream_write() и advance_headers),
-			// но фикс для него не лечит проблему вебкита. Такие дела.
+			// 修复 WebKit 的 bug。当启用丢弃相同帧的选项时，
+			// WebKit 在系列中渲染最后一个帧时会有一些延迟，
+			// 因此需要发送两个帧以确保系列及时完成。
+			// 这类似于 Blink 的 bug（参见 _http_callback_stream_write() 和 advance_headers），
+			// 但针对它的修复无法解决 WebKit 的问题。就是这样。
 
 			const bool dual_update = (
 				server->drop_same_frames
@@ -940,13 +950,16 @@ static void _http_refresher(int fd, short what, void *v_server) {
 	bool stream_updated = false;
 	bool frame_updated = false;
 
+	// 从 JPEG 环形缓冲区获取最新的帧
 	const int ri = us_ring_consumer_acquire(ring, 0);
 	if (ri >= 0) {
 		const us_frame_s *const frame = ring->items[ri];
+		// 如果获取到新帧，调用 _expose_frame 函数更新暴露的帧
 		frame_updated = _expose_frame(server, frame);
 		stream_updated = true;
 		us_ring_consumer_release(ring, ri);
 	} else if (ex->expose_end_ts + 1 < us_get_now_monotonic()) {
+		// 如果长时间没有新帧，重置暴露帧的时间戳
 		_LOG_DEBUG("Repeating exposed ...");
 		ex->expose_begin_ts = us_get_now_monotonic();
 		ex->expose_cmp_ts = ex->expose_begin_ts;
@@ -955,9 +968,13 @@ static void _http_refresher(int fd, short what, void *v_server) {
 		stream_updated = true;
 	}
 
+	// 调用 _http_send_stream 函数发送流数据给所有连接的客户端
 	_http_send_stream(server, stream_updated, frame_updated);
+	// 调用 _http_send_snapshot 函数处理快照请求 ?
 	_http_send_snapshot(server);
 
+	// 检查是否需要通知父进程关于帧状态的变化
+	// 这里大概率是通知KVMD
 	if (
 		frame_updated
 		&& server->notify_parent
@@ -980,20 +997,24 @@ static bool _expose_frame(us_server_s *server, const us_frame_s *frame) {
 	_LOG_DEBUG("Updating exposed frame (online=%d) ...", frame->online);
 	ex->expose_begin_ts = us_get_now_monotonic();
 
+	// 如果启用了丢弃相同帧功能，并且当前帧在线
 	if (server->drop_same_frames && frame->online) {
 		bool need_drop = false;
 		bool maybe_same = false;
+		// TODO: 这里的判断条件需要再优化,相同帧的判断在1126上应该不需要
 		if (
 			(need_drop = (ex->dropped < server->drop_same_frames))
 			&& (maybe_same = us_frame_compare(ex->frame, frame))
 		) {
+			// 如果需要丢弃且帧相同，更新时间戳并增加丢弃计数
 			ex->expose_cmp_ts = us_get_now_monotonic();
 			ex->expose_end_ts = ex->expose_cmp_ts;
 			_LOG_VERBOSE("Dropped same frame number %u; cmp_time=%.06Lf",
 				ex->dropped, (ex->expose_cmp_ts - ex->expose_begin_ts));
 			ex->dropped += 1;
-			return false; // Not updated
+			return false; // 帧未更新
 		} else {
+			// 如果不需要丢弃或帧不同，记录比较时间
 			ex->expose_cmp_ts = us_get_now_monotonic();
 			_LOG_VERBOSE("Passed same frame check (need_drop=%d, maybe_same=%d); cmp_time=%.06Lf",
 				need_drop, maybe_same, (ex->expose_cmp_ts - ex->expose_begin_ts));
@@ -1003,11 +1024,14 @@ static bool _expose_frame(us_server_s *server, const us_frame_s *frame) {
 	if (frame->used == 0) {
 		// Фрейм нулевой длины означает, что мы просто должны повторить то,
 		// что у нас уже есть, с поправкой на онлайн.
+		// 帧长度为0，只更新在线状态
 		ex->frame->online = frame->online;
 	} else {
+		// 否则，复制整个帧
 		us_frame_copy(frame, ex->frame);
 	}
 
+	// 重置丢弃计数和更新时间戳
 	ex->dropped = 0;
 	ex->expose_cmp_ts = ex->expose_begin_ts;
 	ex->expose_end_ts = us_get_now_monotonic();

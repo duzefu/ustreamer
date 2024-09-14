@@ -78,7 +78,7 @@ typedef struct {
 	us_rv1126_encoder_runtime_s *run;
 } us_rv1126_encoder_s;
 
-us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_format, const char* capture_device);
+us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_format, const char* capture_device,int vi_format);
 int us_rv1126_encoder_deinit(us_rv1126_encoder_s* enc);
 
 int us_rv1126_encoder_compress(us_rv1126_encoder_s *enc, const us_frame_s *src, us_frame_s *dest, bool force_key);
