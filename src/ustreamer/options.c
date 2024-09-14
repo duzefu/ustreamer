@@ -779,7 +779,9 @@ static void _help(FILE *fp, const us_capture_s *cap, const us_encoder_s *enc, co
 	SAY("    -h|--help  ─────── Print this text and exit.\n");
 	SAY("    -v|--version  ──── Print version and exit.\n");
 	SAY("    --features  ────── Print list of supported features.\n");
-	SAY("    --vi-format <format>    Set VI format (default: NV12)\n");
-	SAY("    --venc-format <format>    0:h264 1:h265 2:mjpeg Set Venc format (default: h264)\n");
+	SAY("rv1126 options:");
+	SAY("═════════════");
+	SAY("    --vi-format <format num>    4:NV12  13:YUYV422 14:UYVY422 Set VI format (default: NV12)\n");
+	SAY("    --venc-format <format num>    0:h264 1:h265 2:mjpeg Set Venc format (default: h264)\n");
 #	undef SAY
 }
