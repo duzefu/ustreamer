@@ -99,6 +99,7 @@ typedef struct {
 
 	us_stream_runtime_s	*run;
 	int 			vi_format; //TODO: ONLY FOR TETS, SHOULD BE REMOVED WHEN RELEASE
+	int				venc_format;
 } us_stream_s;
 
 

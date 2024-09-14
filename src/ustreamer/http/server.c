@@ -703,29 +703,58 @@ static void _http_callback_stream_write(struct bufferevent *buf_event, void *v_c
 			}
 		}
 
-		_A_EVBUFFER_ADD_PRINTF(buf,
-			"Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate, pre-check=0, post-check=0, max-age=0" RN
-			"Pragma: no-cache" RN
-			"Expires: Mon, 3 Jan 2000 12:34:56 GMT" RN
-			"Set-Cookie: stream_client%s%s=%s/%" PRIx64 "; path=/; max-age=30" RN
-			"Content-Type: multipart/x-mixed-replace;boundary=" BOUNDARY RN
-			RN
-			"--" BOUNDARY RN,
-			(server->instance_id[0] == '\0' ? "" : "_"),
-			server->instance_id,
-			(client->key != NULL ? client->key : "0"),
-			client->id
-		);
+		if (ex->frame->format == V4L2_PIX_FMT_H264){
+			_A_EVBUFFER_ADD_PRINTF(buf,
+				"Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate, pre-check=0, post-check=0, max-age=0" RN
+				"Pragma: no-cache" RN
+				"Expires: Mon, 3 Jan 2000 12:34:56 GMT" RN
+				"Set-Cookie: stream_client%s%s=%s/%" PRIx64 "; path=/; max-age=30" RN
+				"Content-Type: video/h264" RN
+				RN,
+				(server->instance_id[0] == '\0' ? "" : "_"),
+				server->instance_id,
+				(client->key != NULL ? client->key : "0"),
+				client->id
+			);
+		}else if (ex->frame->format == V4L2_PIX_FMT_DV){ // v4l2驱动没有H265定义,先偷一个用着
+			_A_EVBUFFER_ADD_PRINTF(buf,
+				"Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate, pre-check=0, post-check=0, max-age=0" RN
+				"Pragma: no-cache" RN
+				"Expires: Mon, 3 Jan 2000 12:34:56 GMT" RN
+				"Set-Cookie: stream_client%s%s=%s/%" PRIx64 "; path=/; max-age=30" RN
+				"Content-Type: video/hevc" RN
+				RN,
+				(server->instance_id[0] == '\0' ? "" : "_"),
+				server->instance_id,
+				(client->key != NULL ? client->key : "0"),
+				client->id
+			);
+		}else if (ex->frame->format == V4L2_PIX_FMT_MJPEG){
+			_A_EVBUFFER_ADD_PRINTF(buf,
+				"Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate, pre-check=0, post-check=0, max-age=0" RN
+				"Pragma: no-cache" RN
+				"Expires: Mon, 3 Jan 2000 12:34:56 GMT" RN
+				"Set-Cookie: stream_client%s%s=%s/%" PRIx64 "; path=/; max-age=30" RN
+				"Content-Type: multipart/x-mixed-replace;boundary=" BOUNDARY RN
+				RN
+				"--" BOUNDARY RN,
+				(server->instance_id[0] == '\0' ? "" : "_"),
+				server->instance_id,
+				(client->key != NULL ? client->key : "0"),
+				client->id
+			);
 
-		if (client->advance_headers) {
-			ADD_ADVANCE_HEADERS;
+			if (client->advance_headers) {
+				ADD_ADVANCE_HEADERS;
+			}
 		}
+
 
 		assert(!bufferevent_write_buffer(buf_event, buf));
 		client->need_initial = false;
 	}
 
-	if (!client->advance_headers) {
+	if (ex->frame->format == V4L2_PIX_FMT_MJPEG && !client->advance_headers) {
 		_A_EVBUFFER_ADD_PRINTF(buf,
 			"Content-Type: image/jpeg" RN
 			"Content-Length: %zu" RN
@@ -769,25 +798,28 @@ static void _http_callback_stream_write(struct bufferevent *buf_event, void *v_c
 		}
 	}
 
-	// 2.添加帧数据（JPEG 图像）到缓冲区
+
+	// 2. 添加H264帧数据到缓冲区
 	if (!client->zero_data) {
-		// if (savetestfile)
-		// 	fwrite((void*)ex->frame->data, ex->frame->used,1,savetestfile);
+		// 假设ex->frame->data包含H264编码的数据
 		_A_EVBUFFER_ADD(buf, (void*)ex->frame->data, ex->frame->used);
 	}
-	_A_EVBUFFER_ADD_PRINTF(buf, RN "--" BOUNDARY RN);
 
-	if (client->advance_headers) {
-		ADD_ADVANCE_HEADERS;
+	if (ex->frame->format == V4L2_PIX_FMT_MJPEG){
+		_A_EVBUFFER_ADD_PRINTF(buf, RN "--" BOUNDARY RN);
+
+		if (client->advance_headers) {
+			ADD_ADVANCE_HEADERS;
+		}
 	}
 
-	// 3.将构建好的数据写入到客户端的连接缓冲区
+	// 3. 将构建好的数据写入到客户端的连接缓冲区
 	assert(!bufferevent_write_buffer(buf_event, buf));
+	US_LOG_DEBUG("time clause from venc to evhttp is %lf ms",(us_get_now_monotonic() - ex->frame->grab_ts)*1000);
 	evbuffer_free(buf);
 
 	bufferevent_setcb(buf_event, NULL, NULL, _http_callback_stream_error, (void*)client);
 	bufferevent_enable(buf_event, EV_READ);
-
 #	undef ADD_ADVANCE_HEADERS
 #	undef BOUNDARY
 }

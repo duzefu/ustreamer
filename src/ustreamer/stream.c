@@ -690,7 +690,7 @@ static int _stream_init_loop(us_stream_s *stream) {
 				goto offline_and_retry;
 		}
 		us_encoder_open(stream->enc, stream->cap);
-		stream->run->rv1126_enc = us_rv1126_encoder_init(RV1126_ENCODER_FORMAT_MJPEG, "/dev/video0",stream->vi_format);
+		stream->run->rv1126_enc = us_rv1126_encoder_init(stream->venc_format, "/dev/video0",stream->vi_format);
 		return 0;
 
 	offline_and_retry:

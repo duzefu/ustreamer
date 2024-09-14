@@ -132,6 +132,7 @@ enum _US_OPT_VALUES {
 
 	_O_FEATURES,
 	_O_VI_FORMAT,
+	_O_VENC_FORMAT,
 };
 
 static const struct option _LONG_OPTS[] = {
@@ -245,6 +246,7 @@ static const struct option _LONG_OPTS[] = {
 	{"version",					no_argument,		NULL,	_O_VERSION},
 	{"features",				no_argument,		NULL,	_O_FEATURES},
 	{"vi-format",              required_argument,  NULL,   _O_VI_FORMAT},
+	{"venc-format",              required_argument,  NULL,   _O_VENC_FORMAT},
 
 	{NULL, 0, NULL, 0},
 };
@@ -510,7 +512,9 @@ int options_parse(us_options_s *options, us_capture_s *cap, us_encoder_s *enc, u
 			case _O_FEATURES:	_features(); return 1;
 
 			case _O_VI_FORMAT:
-				OPT_NUMBER("--vi_formate", stream->vi_format, 0, 128, 0);
+				OPT_NUMBER("--vi-format", stream->vi_format, 0, 128, 0);
+			case _O_VENC_FORMAT:
+				OPT_NUMBER("--venc-format", stream->venc_format, 0, 128, 0);
 
 			case 0:		break;
 			default:	return -1;
@@ -776,5 +780,6 @@ static void _help(FILE *fp, const us_capture_s *cap, const us_encoder_s *enc, co
 	SAY("    -v|--version  ──── Print version and exit.\n");
 	SAY("    --features  ────── Print list of supported features.\n");
 	SAY("    --vi-format <format>    Set VI format (default: NV12)\n");
+	SAY("    --venc-format <format>    0:h264 1:h265 2:mjpeg Set Venc format (default: h264)\n");
 #	undef SAY
 }

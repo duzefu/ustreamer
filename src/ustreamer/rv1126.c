@@ -27,9 +27,9 @@ RK_U32 venc_width = 1920;
 RK_U32 venc_height = 1080;
 RK_U32 vi_buffer_num = 5; // 增加可能会导致延迟增高,降低在cpu不行(或者不同帧处理时间有明显差异,典型情况就是跑模型)的情况下会丢帧
 RK_U32 Media_framerate = 60;
-RK_U32 Media_bitrate = 6*1024*1024*8;   // 3MBps (每秒产生3M数据)
+RK_U32 Media_bitrate = 1*1024*1024*8;   // 3MBps (每秒产生3M数据)
 RK_S32 gop = 30;
-#define AV_BLOCK_TIME                       1000         // 1000毫秒
+#define AV_BLOCK_TIME                       100         // 1000毫秒
 static const VI_PIPE ViPipe = 0;
 static const VI_CHN ViChn = 0;
 static const VENC_CHN VencChn = 0;
@@ -190,7 +190,7 @@ us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_fo
 		venc_chn_attr.stRcAttr.stH265Cbr.u32SrcFrameRateNum = 60;
 	}else if (enc_type == RK_CODEC_TYPE_MJPEG){
         venc_chn_attr.stRcAttr.enRcMode = VENC_RC_MODE_MJPEGCBR;
-		venc_chn_attr.stRcAttr.stMjpegCbr.u32BitRate = Media_bitrate;
+		venc_chn_attr.stRcAttr.stMjpegCbr.u32BitRate = Media_bitrate*8;
         venc_chn_attr.stRcAttr.stMjpegCbr.fr32DstFrameRateDen = 1;
         venc_chn_attr.stRcAttr.stMjpegCbr.fr32DstFrameRateNum = Media_framerate;
         venc_chn_attr.stRcAttr.stMjpegCbr.u32SrcFrameRateDen = 1;
@@ -212,6 +212,7 @@ us_rv1126_encoder_s* us_rv1126_encoder_init(enum RV1126_ENCODER_FORMAT output_fo
 		US_LOG_ERROR("RV1126: Create venc[%d] error! code:%d\n", VencChn,ret);
 		return NULL;
 	}
+    US_LOG_INFO("RV1126 setup output format %s",output_format == 0? "h264" :(output_format == 1?"h265":"mjpeg"));
 
 
     // ret = RK_MPI_VI_StartStream(s32CamId, 0);
@@ -248,6 +249,7 @@ int us_rv1126_get_frame(us_frame_s* frame){
         return false;
     }
     US_LOG_DEBUG("get frame size %d", RK_MPI_MB_GetSize(mb));
+    frame->grab_ts = frame->encode_begin_ts = frame->encode_end_ts  = us_get_now_monotonic();
 
     // fill frame
     RK_S32 flag = RK_MPI_MB_GetFlag(mb);
@@ -260,7 +262,7 @@ int us_rv1126_get_frame(us_frame_s* frame){
     {
     case RK_CODEC_TYPE_H265:
         // TODO: 标准v4l2里面没有定义H265的fourcc，这里不知道要怎么搞,也不确定是不是必须要有
-        // frame->format = V4L2_PIX_FMT_H265;
+        frame->format = V4L2_PIX_FMT_DV; // 用DV代替H265
         frame->key = flag == VENC_NALU_ISLICE ? true : false; 
         break;
     case RK_CODEC_TYPE_H264:
@@ -277,7 +279,6 @@ int us_rv1126_get_frame(us_frame_s* frame){
     }
 	frame->stride = 0;
 	frame->used = frame_size;
-    frame->grab_ts = frame->encode_begin_ts = frame->encode_end_ts  = us_get_now_monotonic();
     frame->gop = gop;
     frame->online = true;
     return true;
